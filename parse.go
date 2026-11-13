@@ -31,7 +31,12 @@ func (n *actionNode) pos() int { return n.at }
 const (
 	leftDelim  = "{{"
 	rightDelim = "}}"
+	spaces     = " \t\r\n"
 )
+
+func isSpace(c byte) bool {
+	return strings.IndexByte(spaces, c) >= 0
+}
 
 func parse(text string, opts []expr.Option) ([]node, error) {
 	var nodes []node
@@ -42,20 +47,31 @@ func parse(text string, opts []expr.Option) ([]node, error) {
 			break
 		}
 		at := i + j
-		if j > 0 {
-			nodes = append(nodes, &textNode{at: i, text: text[i:at]})
-		}
 		src := text[at+len(leftDelim):]
 		end, err := actionEnd(src)
 		if err != nil {
 			return nil, err
 		}
-		prog, err := expr.Compile(src[:end], opts...)
+		before := text[i:at]
+		body := src[:end]
+		next := at + len(leftDelim) + end + len(rightDelim)
+		if len(body) > 1 && body[0] == '-' && isSpace(body[1]) {
+			before = strings.TrimRight(before, spaces)
+			body = body[1:]
+		}
+		if n := len(body); n > 1 && body[n-1] == '-' && isSpace(body[n-2]) {
+			body = body[:n-1]
+			next = len(text) - len(strings.TrimLeft(text[next:], spaces))
+		}
+		if before != "" {
+			nodes = append(nodes, &textNode{at: i, text: before})
+		}
+		prog, err := expr.Compile(body, opts...)
 		if err != nil {
 			return nil, err
 		}
 		nodes = append(nodes, &actionNode{at: at, prog: prog})
-		i = at + len(leftDelim) + end + len(rightDelim)
+		i = next
 	}
 	if i < len(text) {
 		nodes = append(nodes, &textNode{at: i, text: text[i:]})

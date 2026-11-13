@@ -63,6 +63,18 @@ func TestExecute(t *testing.T) {
 		{"comment with braces", "{{ n /* }} */ }}", "1"},
 		{"left delimiter in string", `{{ "{{" }}`, "{{"},
 		{"unicode in action", `{{ "é→" }} ✓`, "é→ ✓"},
+
+		{"trim", "a  {{- n -}}  b", "a1b"},
+		{"trim newlines", "a\n\n{{- n -}}\n\nb", "a1b"},
+		{"trim tabs", "a\t{{- n -}}\r\n\tb", "a1b"},
+		{"trim left only", "a  {{- n }}  b", "a1  b"},
+		{"trim right only", "a  {{ n -}}  b", "a  1b"},
+		{"trim at the ends", " {{- n -}} ", "1"},
+		{"trim text between actions", "{{ n -}} \n {{- s }}", "1str"},
+		{"trim after comment", "{{ n /* c */ -}} b", "1b"},
+		{"trim keeps minus in text", "hello- {{- 3 -}} -world", "hello-3-world"},
+		{"minus without space", "{{-3}}", "-3"},
+		{"minus before braces", "{{ 5 -3}}", "2"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
