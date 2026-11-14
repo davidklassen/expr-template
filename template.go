@@ -35,9 +35,10 @@ func (t *Template) Name() string {
 // expressions. It replaces the body from an earlier call.
 //
 // If an error occurs, Parse returns nil and the error, and the template
-// keeps its earlier body.
+// keeps its earlier body. The error is an [*Error]. It has the position
+// of the problem in text.
 func (t *Template) Parse(text string) (*Template, error) {
-	nodes, err := parse(text, t.opts)
+	nodes, err := parse(t.name, text, t.opts)
 	if err != nil {
 		return nil, err
 	}

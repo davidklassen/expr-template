@@ -8,6 +8,9 @@
 //	t := template.Must(template.New("hello").Parse("Hello, {{ name }}!\n"))
 //	err := t.Execute(os.Stdout, map[string]any{"name": "Alice"})
 //
+// An action needs an expression. An action without one, such as "{{ }}",
+// is an error.
+//
 // A trim marker removes the white space around an action. A minus
 // sign and white space after "{{" remove all white space before the
 // action. White space and a minus sign before "}}" remove all white

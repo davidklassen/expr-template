@@ -1,6 +1,8 @@
 package template_test
 
 import (
+	"errors"
+	"fmt"
 	"log"
 	"os"
 
@@ -37,4 +39,22 @@ func ExampleNew() {
 	}
 	// Output:
 	// 2 items, total 3
+}
+
+func ExampleError() {
+	type Env struct {
+		Name string `expr:"name"`
+	}
+
+	_, err := template.New("hello", expr.Env(Env{})).Parse("Hello, {{ nmae }}!\n")
+	fmt.Println(err)
+
+	if e, ok := errors.AsType[*template.Error](err); ok {
+		fmt.Println(e.Name, e.Line, e.Column)
+	}
+	// Output:
+	// unknown name nmae (hello:1:11)
+	//  | Hello, {{ nmae }}!
+	//  | ..........^
+	// hello 1 11
 }

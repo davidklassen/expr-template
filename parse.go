@@ -1,7 +1,6 @@
 package template
 
 import (
-	"errors"
 	"strings"
 
 	"github.com/expr-lang/expr"
@@ -38,7 +37,7 @@ func isSpace(c byte) bool {
 	return strings.IndexByte(spaces, c) >= 0
 }
 
-func parse(text string, opts []expr.Option) ([]node, error) {
+func parse(name, text string, opts []expr.Option) ([]node, error) {
 	var nodes []node
 	i := 0
 	for {
@@ -47,28 +46,38 @@ func parse(text string, opts []expr.Option) ([]node, error) {
 			break
 		}
 		at := i + j
-		src := text[at+len(leftDelim):]
+		start := at + len(leftDelim)
+		src := text[start:]
 		end, err := actionEnd(src)
 		if err != nil {
-			return nil, err
+			// The lexer can fail in the text after an action that has no
+			// "}}", so the position of err can be far from the cause.
+			return nil, newError(name, text, at, exprMessage(err))
+		}
+		if end < 0 {
+			return nil, newError(name, text, at, "unclosed action")
 		}
 		before := text[i:at]
 		body := src[:end]
-		next := at + len(leftDelim) + end + len(rightDelim)
+		next := start + end + len(rightDelim)
 		if len(body) > 1 && body[0] == '-' && isSpace(body[1]) {
 			before = strings.TrimRight(before, spaces)
 			body = body[1:]
+			start++
 		}
 		if n := len(body); n > 1 && body[n-1] == '-' && isSpace(body[n-2]) {
 			body = body[:n-1]
 			next = len(text) - len(strings.TrimLeft(text[next:], spaces))
+		}
+		if strings.Trim(body, spaces) == "" {
+			return nil, newError(name, text, at, "empty action")
 		}
 		if before != "" {
 			nodes = append(nodes, &textNode{at: i, text: before})
 		}
 		prog, err := expr.Compile(body, opts...)
 		if err != nil {
-			return nil, err
+			return nil, exprError(name, text, at, start, err)
 		}
 		nodes = append(nodes, &actionNode{at: at, prog: prog})
 		i = next
@@ -80,8 +89,9 @@ func parse(text string, opts []expr.Option) ([]node, error) {
 }
 
 // actionEnd returns the byte offset in src of the "}}" that ends the
-// action. It scans src with the expr lexer, because "}}" does not end
-// the action inside a string or a comment, or when it closes a map.
+// action, or -1 if src has none. It scans src with the expr lexer,
+// because "}}" does not end the action inside a string or a comment, or
+// when it closes a map.
 func actionEnd(src string) (int, error) {
 	// Do not reuse one lexer for all actions. Reset has a bug in expr: it
 	// keeps the position from the previous source.
@@ -97,7 +107,7 @@ func actionEnd(src string) (int, error) {
 		}
 		switch {
 		case tok.Is(lexer.EOF):
-			return 0, errors.New("unclosed action")
+			return -1, nil
 		case tok.Is(lexer.Bracket, "{"):
 			depth++
 		case tok.Is(lexer.Bracket, "}") && depth > 0:
