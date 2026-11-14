@@ -8,22 +8,29 @@
 //	t := template.Must(template.New("hello").Parse("Hello, {{ name }}!\n"))
 //	err := t.Execute(os.Stdout, map[string]any{"name": "Alice"})
 //
-// An if action and an end action enclose a part of the template. The
-// expression after the word if is the condition. Execute runs the
-// enclosed part only when the condition is true:
+// An if action runs a part of the template only when a condition is
+// true. It has the forms below. T1 and T0 stand for parts of the
+// template: text and actions.
 //
-//	{{ if len(items) > 0 }}You have {{ len(items) }} items.{{ end }}
+//	{{ if condition }} T1 {{ end }}
+//		If the condition is true, T1 is executed. Otherwise no output
+//		is generated. The condition is an expression, and its value
+//		must be a boolean. Any other value, including nil, is an
+//		error. To test whether a value is set, compare it with nil:
+//		{{ if name != nil }}.
 //
-// If actions can be nested.
+//	{{ if condition }} T1 {{ else }} T0 {{ end }}
+//		If the condition is true, T1 is executed. Otherwise T0 is
+//		executed.
 //
-// The condition must be a boolean. Any other value, including nil, is
-// an error. Parse reports the error when it knows the type of the
-// condition. Otherwise Execute reports it. To test whether a value is
-// set, compare it with nil: "{{ if name != nil }}".
+//	{{ if condition }} T1 {{ else if condition }} T0 {{ end }}
+//		The else action of an if can include another if directly.
+//		The effect is the same as writing
+//			{{ if condition }} T1 {{ else }}{{ if condition }} T0 {{ end }}{{ end }}
 //
-// An action that starts with the word if or end is always an if action
-// or an end action. To start an expression with one of these words, put
-// the expression in parentheses. "{{ (end) }}" prints the value of the
+// An action that starts with the word if, else, or end is always an
+// action of that kind. An expression that starts with the word if or
+// end must be in parentheses. "{{ (end) }}" prints the value of the
 // name end. "{{ (if a { 1 } else { 2 }) }}" is the if expression of
 // expr.
 //
@@ -46,9 +53,6 @@
 //
 // A // comment runs to the end of the line, so the closing "}}" must be
 // on the next line.
-//
-// An action with no expression and no comment, such as "{{ }}", is an
-// error.
 //
 // The package does not escape the output.
 //

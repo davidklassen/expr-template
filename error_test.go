@@ -105,6 +105,66 @@ func TestParseError(t *testing.T) {
 			"unexpected {{end}} (t:1:24)\n | {{ if true }}a{{ end }}{{ end }}\n | .......................^",
 		},
 		{
+			"else without if",
+			"a {{ else }}",
+			"unexpected {{else}} (t:1:3)\n | a {{ else }}\n | ..^",
+		},
+		{
+			"else with an expression and without if",
+			"a {{ else n }}",
+			"unexpected {{else}} (t:1:3)\n | a {{ else n }}\n | ..^",
+		},
+		{
+			"else if without if",
+			"a {{ else if true }}",
+			"unexpected {{else}} (t:1:3)\n | a {{ else if true }}\n | ..^",
+		},
+		{
+			"else after else",
+			"{{ if true }}a{{ else }}b{{ else }}c{{ end }}",
+			"unexpected {{else}} (t:1:26)\n | {{ if true }}a{{ else }}b{{ else }}c{{ end }}\n | .........................^",
+		},
+		{
+			"else if after else",
+			"{{ if true }}a{{ else }}b{{ else if true }}c{{ end }}",
+			"unexpected {{else}} (t:1:26)\n | {{ if true }}a{{ else }}b{{ else if true }}c{{ end }}\n | .........................^",
+		},
+		{
+			"else with an expression",
+			"{{ if true }}a{{ else n }}b{{ end }}",
+			"unexpected token Identifier(\"n\") (t:1:23)\n | {{ if true }}a{{ else n }}b{{ end }}\n | ......................^",
+		},
+		{
+			"else if without condition",
+			"{{ if true }}a{{ else if }}b{{ end }}",
+			"missing condition (t:1:15)\n | {{ if true }}a{{ else if }}b{{ end }}\n | ..............^",
+		},
+		{
+			"else without end",
+			"a {{ if true }}b{{ else }}c",
+			"unclosed if (t:1:17)\n | a {{ if true }}b{{ else }}c\n | ................^",
+		},
+		{
+			"else if without end",
+			"a {{ if true }}b{{ else if true }}c",
+			"unclosed if (t:1:17)\n | a {{ if true }}b{{ else if true }}c\n | ................^",
+		},
+		{
+			"condition of else if is not a boolean",
+			"{{ if true }}a{{ else if n }}b{{ end }}",
+			"non-bool expression (type int) used as condition (t:1:26)\n | {{ if true }}a{{ else if n }}b{{ end }}\n | .........................^",
+		},
+		{
+			"error in a condition of else if after multi-byte characters",
+			"{{ if true }}é{{ /* é */ else /* é */ if nn }}b{{ end }}",
+			"unknown name nn (t:1:42)\n | {{ if true }}é{{ /* é */ else /* é */ if nn }}b{{ end }}\n | .........................................^",
+		},
+		{
+			"error in an else",
+			"{{ if true }}a{{ else }}\n{{ nn }}{{ end }}",
+			"unknown name nn (t:2:4)\n | {{ nn }}{{ end }}\n | ...^",
+		},
+		{
 			"if without end",
 			"a {{ if true }} b",
 			"unclosed if (t:1:3)\n | a {{ if true }} b\n | ..^",
@@ -271,6 +331,16 @@ func TestExecuteError(t *testing.T) {
 			"index out of range: 5 (array length is 2) (t:2:5)\n | {{ l[5] }}{{ end }}\n | ....^",
 		},
 		{
+			"in a condition of else if",
+			"{{ if false }}a{{ else if l[5] == 1 }}b{{ end }}",
+			"index out of range: 5 (array length is 2) (t:1:28)\n | {{ if false }}a{{ else if l[5] == 1 }}b{{ end }}\n | ...........................^",
+		},
+		{
+			"in an else",
+			"{{ if false }}a{{ else }}\n{{ l[5] }}{{ end }}",
+			"index out of range: 5 (array length is 2) (t:2:5)\n | {{ l[5] }}{{ end }}\n | ....^",
+		},
+		{
 			"error of a function",
 			"a {{ fail() }}",
 			"failed (t:1:6)\n | a {{ fail() }}\n | .....^",
@@ -307,23 +377,38 @@ var boomFunc = expr.Function("boom", func(...any) (any, error) {
 func TestExecuteConditionError(t *testing.T) {
 	tests := []struct {
 		name string
+		text string
 		data map[string]any
 		want string
 	}{
 		{
 			"int",
+			"x {{ if a }}b{{ end }}",
 			map[string]any{"a": 1},
 			"non-bool expression (type int) used as condition (t:1:9)\n | x {{ if a }}b{{ end }}\n | ........^",
 		},
 		{
 			"nil",
+			"x {{ if a }}b{{ end }}",
 			map[string]any{},
 			"non-bool expression (type nil) used as condition (t:1:9)\n | x {{ if a }}b{{ end }}\n | ........^",
+		},
+		{
+			"int in else if",
+			"x {{ if false }}b{{ else if a }}c{{ end }}",
+			map[string]any{"a": 1},
+			"non-bool expression (type int) used as condition (t:1:29)\n | x {{ if false }}b{{ else if a }}c{{ end }}\n | ............................^",
+		},
+		{
+			"error without position in else if",
+			"x {{ if false }}b{{ else if (if a { true } else { false }) }}c{{ end }}",
+			map[string]any{"a": 1},
+			"interface conversion: interface {} is int, not bool (t:1:18)\n | x {{ if false }}b{{ else if (if a { true } else { false }) }}c{{ end }}\n | .................^",
 		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got, err := execute(t, "x {{ if a }}b{{ end }}", tt.data)
+			got, err := execute(t, tt.text, tt.data)
 			if err == nil {
 				t.Fatal("no error")
 			}

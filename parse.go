@@ -30,10 +30,11 @@ type actionNode struct {
 }
 
 type ifNode struct {
-	at    int
-	start int
-	prog  *vm.Program
-	body  []node
+	at       int
+	start    int
+	prog     *vm.Program
+	body     []node
+	elseBody []node
 }
 
 const (
@@ -50,50 +51,52 @@ type parser struct {
 
 func parse(name, text string, opts []expr.Option) ([]node, error) {
 	p := &parser{name: name, text: text, opts: opts}
-	nodes, end, err := p.list()
+	nodes, stop, err := p.list()
 	if err != nil {
 		return nil, err
 	}
-	if end >= 0 {
-		return nil, p.error(end, "unexpected {{end}}")
+	if stop != nil {
+		return nil, p.error(stop.at, fmt.Sprintf("unexpected {{%s}}", stop.tokens[0].Value))
 	}
 	return nodes, nil
 }
 
-// list parses nodes up to the next end action, or up to the end of the
-// text. It returns the byte offset of that end action, or -1 at the end
-// of the text.
-func (p *parser) list() ([]node, int, error) {
+// list parses nodes up to the next else action or end action, or up to
+// the end of the text. It returns the action that stopped it, or nil at
+// the end of the text.
+func (p *parser) list() ([]node, *action, error) {
 	var nodes []node
 	for {
 		a, ok, err := p.next()
 		if err != nil {
-			return nil, 0, err
+			return nil, nil, err
 		}
 		if a.before != "" {
 			nodes = append(nodes, &textNode{text: a.before})
 		}
 		if !ok {
-			return nodes, -1, nil
+			return nodes, nil, nil
 		}
 		switch tok := a.tokens[0]; {
 		case tok.Is(lexer.EOF):
 			// The action has only comments.
 		case tok.Is(lexer.Operator, "if"):
-			n, err := p.parseIf(a)
+			n, err := p.parseIf(a, a.tokens[1])
 			if err != nil {
-				return nil, 0, err
+				return nil, nil, err
 			}
 			nodes = append(nodes, n)
+		case tok.Is(lexer.Operator, "else"):
+			return nodes, &a, nil
 		case tok.Is(lexer.Identifier, "end"):
 			if tok := a.tokens[1]; !tok.Is(lexer.EOF) {
-				return nil, 0, p.error(a.start+byteOffset(a.body, tok.From), fmt.Sprintf("unexpected token %v", tok))
+				return nil, nil, p.unexpected(a, tok)
 			}
-			return nodes, a.at, nil
+			return nodes, &a, nil
 		default:
 			prog, err := expr.Compile(a.body, p.opts...)
 			if err != nil {
-				return nil, 0, exprError(p.name, p.text, a.at, a.start, err)
+				return nil, nil, exprError(p.name, p.text, a.at, a.start, err)
 			}
 			nodes = append(nodes, &actionNode{at: a.at, start: a.start, prog: prog})
 		}
@@ -101,18 +104,18 @@ func (p *parser) list() ([]node, int, error) {
 }
 
 // parseIf parses the if action a and the nodes up to its end action.
-func (p *parser) parseIf(a action) (*ifNode, error) {
-	tok := a.tokens[1]
-	if tok.Is(lexer.EOF) {
+// cond is the first token of the condition.
+func (p *parser) parseIf(a action, cond lexer.Token) (*ifNode, error) {
+	if cond.Is(lexer.EOF) {
 		return nil, p.error(a.at, "missing condition")
 	}
-	n := byteOffset(a.body, tok.From)
-	start := a.start + n
+	offset := byteOffset(a.body, cond.From)
+	start := a.start + offset
 	// The options of the template can set the type of the result, as
 	// expr.AsInt does. That type is for the values that the template
 	// prints. The condition must be a boolean with any options, so the
 	// last option here removes the type that the options before it set.
-	prog, err := expr.Compile(a.body[n:], append(slices.Clip(p.opts), expr.AsKind(reflect.Invalid))...)
+	prog, err := expr.Compile(a.body[offset:], append(slices.Clip(p.opts), expr.AsKind(reflect.Invalid))...)
 	if err != nil {
 		return nil, exprError(p.name, p.text, a.at, start, err)
 	}
@@ -122,14 +125,55 @@ func (p *parser) parseIf(a action) (*ifNode, error) {
 	if t := prog.Node().Type(); t != reflect.TypeFor[bool]() && t.Kind() != reflect.Interface {
 		return nil, p.error(start, conditionMessage(t.String()))
 	}
-	body, end, err := p.list()
+	body, stop, err := p.list()
 	if err != nil {
 		return nil, err
 	}
-	if end < 0 {
+	if stop == nil {
 		return nil, p.error(a.at, "unclosed if")
 	}
-	return &ifNode{at: a.at, start: start, prog: prog, body: body}, nil
+	n := &ifNode{at: a.at, start: start, prog: prog, body: body}
+	if stop.tokens[0].Is(lexer.Operator, "else") {
+		n.elseBody, err = p.parseElse(*stop)
+		if err != nil {
+			return nil, err
+		}
+	}
+	return n, nil
+}
+
+// parseElse parses the else action a and the nodes up to the end action
+// of its if action. It returns the nodes of the else part.
+func (p *parser) parseElse(a action) ([]node, error) {
+	switch tok := a.tokens[1]; {
+	case tok.Is(lexer.EOF):
+		nodes, stop, err := p.list()
+		if err != nil {
+			return nil, err
+		}
+		if stop == nil {
+			return nil, p.error(a.at, "unclosed if")
+		}
+		if stop.tokens[0].Is(lexer.Operator, "else") {
+			return nil, p.error(stop.at, "unexpected {{else}}")
+		}
+		return nodes, nil
+	case tok.Is(lexer.Operator, "if"):
+		// An "else if" is treated as an if nested in the else branch.
+		// parseIf reads up to the end action, so one end action closes
+		// the whole chain.
+		n, err := p.parseIf(a, a.tokens[2])
+		if err != nil {
+			return nil, err
+		}
+		return []node{n}, nil
+	default:
+		return nil, p.unexpected(a, tok)
+	}
+}
+
+func (p *parser) unexpected(a action, tok lexer.Token) *Error {
+	return p.error(a.start+byteOffset(a.body, tok.From), fmt.Sprintf("unexpected token %v", tok))
 }
 
 func (p *parser) error(pos int, message string) *Error {

@@ -20,12 +20,11 @@ type Template struct {
 
 // New returns a new template with the given name. The options apply to
 // every expression of the template when [Template.Parse] compiles it.
-// An option that sets the type of the result, such as [expr.AsInt],
-// does not apply to the condition of an if action.
 //
 // Use [expr.Env] to declare the type of the data that [Template.Execute]
-// receives. Parse then reports unknown names and type errors. Without
-// expr.Env, an unknown name has the value nil.
+// receives. Parse then reports type errors, and names that the data
+// does not have. Without expr.Env, Parse does not check the names. A
+// name that the data does not have then gets the value nil in Execute.
 func New(name string, opts ...expr.Option) *Template {
 	return &Template{name: name, opts: slices.Clone(opts)}
 }
@@ -36,11 +35,10 @@ func (t *Template) Name() string {
 }
 
 // Parse parses text as the body of the template and compiles its
-// expressions. It replaces the body from an earlier call.
+// expressions.
 //
-// If an error occurs, Parse returns nil and the error, and the template
-// keeps its earlier body. The error is an [*Error]. It has the position
-// of the problem in text.
+// If an error occurs, Parse returns nil and the error. The error is an
+// [*Error]. It has the position of the problem in text.
 func (t *Template) Parse(text string) (*Template, error) {
 	nodes, err := parse(t.name, text, t.opts)
 	if err != nil {
@@ -58,9 +56,8 @@ func (t *Template) Parse(text string) (*Template, error) {
 //
 // If an error occurs, Execute stops, but it can have written part of
 // the output to w. An error in an action is an [*Error]. It has the
-// position of the problem in the template. An error of w comes
-// back unchanged. Execute returns an error if the template is not
-// parsed.
+// position of the problem in the template. If a write to w fails,
+// Execute returns the error of that write as it is.
 //
 // A template may be executed safely in parallel. If parallel executions
 // share a Writer, the output may be interleaved.
@@ -99,10 +96,12 @@ func (t *Template) exec(w io.Writer, nodes []node, data any) error {
 				}
 				return newError(t.name, t.text, n.start, conditionMessage(typ))
 			}
+			body := n.elseBody
 			if cond {
-				if err := t.exec(w, n.body, data); err != nil {
-					return err
-				}
+				body = n.body
+			}
+			if err := t.exec(w, body, data); err != nil {
+				return err
 			}
 		}
 	}
