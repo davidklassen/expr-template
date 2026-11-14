@@ -21,8 +21,9 @@ type textNode struct {
 func (n *textNode) pos() int { return n.at }
 
 type actionNode struct {
-	at   int
-	prog *vm.Program
+	at    int
+	start int
+	prog  *vm.Program
 }
 
 func (n *actionNode) pos() int { return n.at }
@@ -79,7 +80,7 @@ func parse(name, text string, opts []expr.Option) ([]node, error) {
 		if err != nil {
 			return nil, exprError(name, text, at, start, err)
 		}
-		nodes = append(nodes, &actionNode{at: at, prog: prog})
+		nodes = append(nodes, &actionNode{at: at, start: start, prog: prog})
 		i = next
 	}
 	if i < len(text) {

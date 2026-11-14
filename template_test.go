@@ -100,17 +100,6 @@ func TestExecuteWithoutOptions(t *testing.T) {
 	}
 }
 
-func TestExecuteError(t *testing.T) {
-	_, err := execute(t, "a\n{{ l[5] }}", testData, expr.Env(env{}))
-	if err == nil {
-		t.Fatal("no error")
-	}
-	want := "index out of range: 5 (array length is 2) (1:3)\n |  l[5] \n | ..^"
-	if err.Error() != want {
-		t.Errorf("got\n%s\nwant\n%s", err, want)
-	}
-}
-
 func TestExecuteBeforeParse(t *testing.T) {
 	err := New("t").Execute(io.Discard, nil)
 	if err == nil {

@@ -13,6 +13,7 @@ type Template struct {
 	name   string
 	opts   []expr.Option
 	parsed bool
+	text   string
 	nodes  []node
 }
 
@@ -43,6 +44,7 @@ func (t *Template) Parse(text string) (*Template, error) {
 		return nil, err
 	}
 	t.parsed = true
+	t.text = text
 	t.nodes = nodes
 	return t, nil
 }
@@ -52,7 +54,9 @@ func (t *Template) Parse(text string) (*Template, error) {
 // each action as [fmt.Print] does.
 //
 // If an error occurs, Execute stops, but it can have written part of
-// the output to w. Execute returns an error if the template is not
+// the output to w. The error of an expression is an [*Error]. It has
+// the position of the problem in the template. An error of w comes
+// back unchanged. Execute returns an error if the template is not
 // parsed.
 //
 // A template may be executed safely in parallel. If parallel executions
@@ -70,7 +74,7 @@ func (t *Template) Execute(w io.Writer, data any) error {
 		case *actionNode:
 			v, err := expr.Run(n.prog, data)
 			if err != nil {
-				return err
+				return exprError(t.name, t.text, n.at, n.start, err)
 			}
 			if _, err := fmt.Fprint(w, v); err != nil {
 				return err

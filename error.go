@@ -24,9 +24,8 @@ func (e *Error) Error() string {
 	return fmt.Sprintf("%s (%s:%d:%d)%s", e.Message, e.Name, e.Line, e.Column, e.snippet)
 }
 
-// Unwrap returns the cause of e, or nil if it has none. A cause is an
-// error from outside the template, such as an error that a function
-// returns.
+// Unwrap returns the cause of e, or nil if it has none. If a function
+// that the template calls returns an error, that error is the cause.
 func (e *Error) Unwrap() error {
 	return e.cause
 }
@@ -54,7 +53,14 @@ func exprError(name, text string, at, start int, err error) *Error {
 	if !ok {
 		return newError(name, text, at, err.Error())
 	}
-	e := newError(name, text, start+byteOffset(text[start:], fe.From), fe.Message)
+	// expr uses the zero value of Location when it has no position for a
+	// run-time error. The error then points to the action. A real
+	// location is never the zero value: its end is after its start.
+	pos := at
+	if fe.Location != (file.Location{}) {
+		pos = start + byteOffset(text[start:], fe.From)
+	}
+	e := newError(name, text, pos, fe.Message)
 	e.cause = fe.Prev
 	return e
 }
