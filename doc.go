@@ -31,16 +31,26 @@
 // A for action runs a part of the template for each element of a list.
 //
 //	{{ for x in list }} T1 {{ end }}
-//		The list is an expression, and its value must be a slice or
-//		an array. Any other value, including nil, is an error. T1 is
-//		executed for each element of the list, in order. In T1, the
+//		The list is an expression, and its value must be a slice, an
+//		array, or a map. Any other value, including nil, is an error.
+//		T1 is executed for each element of the list. In T1, the
 //		variable x has the value of the element. If the list is
 //		empty, no output is generated.
 //
-// The variable of a for action exists only in T1. There it shadows a name of
-// the data, a function, or the variable of an enclosing for action with the
-// same name. If Parse knows the type of the list, it knows the type of the
-// variable, and it reports a wrong use of the variable.
+//	{{ for i, x in list }} T1 {{ end }}
+//		This form has a second variable, i. For a slice or an array,
+//		i has the index of the element, from 0. For a map, i has the
+//		key of the element.
+//
+// For a map, T1 is executed for the elements in the order of their keys. The
+// keys must all be strings, all be integers, or all be floats. Numbers are in
+// the order of their values. Strings are in the order of their bytes, so "B"
+// comes before "a".
+//
+// The variables of a for action exist only in T1. There a variable shadows a
+// name of the data, a function, or the variable of an enclosing for action with
+// the same name. If Parse knows the type of the list, it knows the types of the
+// variables, and it reports a wrong use of a variable.
 //
 // In T1 of a for action, the expressions read a copy of the data. If a method
 // of the data changes a field of the data, an expression in T1 that reads this

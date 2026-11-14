@@ -38,11 +38,14 @@ type ifNode struct {
 	elseBody []node
 }
 
-// start is the byte offset of the list expression.
+// start is the byte offset of the list expression. key is the name of the
+// variable for the index or the key, or "" if the action has one variable.
+// name is the name of the variable for the element.
 type forNode struct {
 	at    int
 	start int
 	prog  *vm.Program
+	key   string
 	name  string
 	body  []node
 }
@@ -57,7 +60,7 @@ const (
 )
 
 // opts are the options for the expressions at the current position. In the body
-// of a loop, they declare the loop variable.
+// of a loop, they declare the loop variables.
 type parser struct {
 	name string
 	text string
@@ -177,17 +180,27 @@ func (p *parser) compile(a action, first lexer.Token) (*vm.Program, int, error) 
 
 // parseFor parses the for action a and the nodes up to its end action.
 func (p *parser) parseFor(a action) (*forNode, error) {
+	var key string
 	name := a.tokens[1]
-	if name.Is(lexer.EOF) {
-		return nil, p.error(a.at, "missing variable")
+	if err := p.checkVariable(a, name); err != nil {
+		return nil, err
 	}
-	if !name.Is(lexer.Identifier) || slices.Contains(reserved, name.Value) {
-		return nil, p.unexpected(a, name)
+	next := 2
+	if a.tokens[next].Is(lexer.Operator, ",") {
+		key = name.Value
+		name = a.tokens[next+1]
+		if err := p.checkVariable(a, name); err != nil {
+			return nil, err
+		}
+		if name.Value == key {
+			return nil, p.error(a.start+byteOffset(a.body, name.From), "cannot redeclare "+key)
+		}
+		next += 2
 	}
-	if in := a.tokens[2]; !in.Is(lexer.Operator, "in") {
+	if in := a.tokens[next]; !in.Is(lexer.Operator, "in") {
 		return nil, p.unexpected(a, in)
 	}
-	list := a.tokens[3]
+	list := a.tokens[next+1]
 	if list.Is(lexer.EOF) {
 		return nil, p.error(a.at, "missing list")
 	}
@@ -198,18 +211,23 @@ func (p *parser) parseFor(a action) (*forNode, error) {
 	// expr keeps what it knows about a value in its nature. The nature of a
 	// list has the type of its elements, also when the Go type of the list is
 	// []any, as for [1, 2]. If expr does not know the type of the list, the
-	// loop variable has no type, and Execute checks that the value is a list.
+	// loop variables have no type, and Execute checks the value.
 	var c nature.Cache
-	var elem nature.Nature
+	var index, elem nature.Nature
 	switch list := prog.Node().Nature(); {
 	case list.IsArray():
-		elem = list.Elem(&c)
+		index, elem = c.FromType(reflect.TypeFor[int]()), list.Elem(&c)
+	case list.IsMap() && canOrder(list.Type.Key()):
+		index, elem = list.Key(&c), list.Elem(&c)
 	case list.Type == nil || list.Kind == reflect.Interface:
 	default:
 		return nil, p.error(start, loopMessage(list.Type.String()))
 	}
 	opts := p.opts
 	p.opts = append(slices.Clip(opts), loopVar(name.Value, elem))
+	if key != "" {
+		p.opts = append(p.opts, loopVar(key, index))
+	}
 	body, stop, err := p.list()
 	p.opts = opts
 	if err != nil {
@@ -221,7 +239,19 @@ func (p *parser) parseFor(a action) (*forNode, error) {
 	if stop.tokens[0].Is(lexer.Operator, "else") {
 		return nil, p.error(stop.at, "unexpected {{else}}")
 	}
-	return &forNode{at: a.at, start: start, prog: prog, name: name.Value, body: body}, nil
+	return &forNode{at: a.at, start: start, prog: prog, key: key, name: name.Value, body: body}, nil
+}
+
+// checkVariable checks that the token tok of the for action a can be a loop
+// variable.
+func (p *parser) checkVariable(a action, tok lexer.Token) error {
+	if tok.Is(lexer.EOF) {
+		return p.error(a.at, "missing variable")
+	}
+	if !tok.Is(lexer.Identifier) || slices.Contains(reserved, tok.Value) {
+		return p.unexpected(a, tok)
+	}
+	return nil
 }
 
 // parseElse parses the else action a and the nodes up to the end action of its

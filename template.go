@@ -98,24 +98,51 @@ func (t *Template) exec(w io.Writer, nodes []node, data any) error {
 				return err
 			}
 		case *forNode:
-			v, err := expr.Run(n.prog, data)
-			if err != nil {
-				return exprError(t.name, t.text, n.at, n.start, err)
+			if err := t.execFor(w, n, data); err != nil {
+				return err
 			}
-			list := reflect.ValueOf(v)
-			if list.Kind() != reflect.Slice && list.Kind() != reflect.Array {
-				return newError(t.name, t.text, n.start, loopMessage(typeName(v)))
+		}
+	}
+	return nil
+}
+
+func (t *Template) execFor(w io.Writer, n *forNode, data any) error {
+	v, err := expr.Run(n.prog, data)
+	if err != nil {
+		return exprError(t.name, t.text, n.at, n.start, err)
+	}
+	list := reflect.ValueOf(v)
+	var entries []entry
+	ok := list.Kind() == reflect.Slice || list.Kind() == reflect.Array
+	if list.Kind() == reflect.Map {
+		entries, ok = sortedEntries(list)
+	}
+	if !ok {
+		return newError(t.name, t.text, n.start, loopMessage(typeName(v)))
+	}
+	if list.Len() == 0 {
+		return nil
+	}
+	loop := newLoopEnv(data)
+	if list.Kind() == reflect.Map {
+		for _, e := range entries {
+			if n.key != "" {
+				loop[n.key] = e.key.Interface()
 			}
-			if list.Len() == 0 {
-				continue
+			loop[n.name] = e.value.Interface()
+			if err := t.exec(w, n.body, loop); err != nil {
+				return err
 			}
-			loop := newLoopEnv(data)
-			for i := range list.Len() {
-				loop[n.name] = list.Index(i).Interface()
-				if err := t.exec(w, n.body, loop); err != nil {
-					return err
-				}
-			}
+		}
+		return nil
+	}
+	for i := range list.Len() {
+		if n.key != "" {
+			loop[n.key] = i
+		}
+		loop[n.name] = list.Index(i).Interface()
+		if err := t.exec(w, n.body, loop); err != nil {
+			return err
 		}
 	}
 	return nil

@@ -2,6 +2,7 @@ package template
 
 import (
 	"fmt"
+	"math"
 	"strings"
 	"testing"
 
@@ -25,6 +26,8 @@ type deep struct {
 	Deep string
 }
 
+type id string
+
 type namedMap map[string]any
 
 func (namedMap) Title() string { return "t" }
@@ -37,17 +40,26 @@ type loopData struct {
 	loopBase
 	hidden
 	*deep
-	Name   string       `expr:"name"`
-	Items  []item       `expr:"items"`
-	Nums   []int        `expr:"nums"`
-	Empty  []int        `expr:"empty"`
-	Lists  [][]int      `expr:"lists"`
-	Single []int        `expr:"single"`
-	Mixed  any          `expr:"mixed"`
-	Str    fmt.Stringer `expr:"str"`
-	Arr    [2]int       `expr:"arr"`
-	Boxed  any          `expr:"boxed"`
-	Skip   string       `expr:"-"`
+	Name   string            `expr:"name"`
+	Items  []item            `expr:"items"`
+	Nums   []int             `expr:"nums"`
+	Empty  []int             `expr:"empty"`
+	Lists  [][]int           `expr:"lists"`
+	Single []int             `expr:"single"`
+	Mixed  any               `expr:"mixed"`
+	Str    fmt.Stringer      `expr:"str"`
+	Arr    [2]int            `expr:"arr"`
+	Ages   map[string]int    `expr:"ages"`
+	ByID   map[int]string    `expr:"byid"`
+	Ratio  map[float64]int   `expr:"ratio"`
+	UKeys  map[uint64]string `expr:"ukeys"`
+	Words  map[string]int    `expr:"words"`
+	ByName map[id]int        `expr:"byname"`
+	NoMap  map[string]int    `expr:"nomap"`
+	Flags  map[bool]int      `expr:"flags"`
+	Boxed  any               `expr:"boxed"`
+	Boxed2 any               `expr:"boxed2"`
+	Skip   string            `expr:"-"`
 	Plain  string
 }
 
@@ -61,6 +73,11 @@ func (d loopData) Take(it *item) string { return it.Title }
 
 func (d loopData) Join(a, b item) string { return a.Title + b.Title }
 
+func (d loopData) Drop(key string) string {
+	delete(d.Ages, key)
+	return ""
+}
+
 func newLoopData() *loopData {
 	return &loopData{
 		loopBase: loopBase{ID: 7},
@@ -73,7 +90,15 @@ func newLoopData() *loopData {
 		Mixed:    []any{1, "a"},
 		Str:      str("S"),
 		Arr:      [2]int{4, 5},
+		Ages:     map[string]int{"bob": 2, "al": 1, "cy": 3},
+		ByID:     map[int]string{2: "b", 10: "j", -1: "n", 1: "a"},
+		Ratio:    map[float64]int{2.5: 2, 10.5: 3, 0.5: 1},
+		UKeys:    map[uint64]string{1 << 63: "x", 10: "j", 2: "b"},
+		Words:    map[string]int{"k2": 1, "a": 2, "é": 3, "B": 4, "k10": 5},
+		ByName:   map[id]int{"b": 2, "a": 1},
+		Flags:    map[bool]int{true: 1},
 		Boxed:    [2]int{6, 7},
+		Boxed2:   map[string]int{"y": 2, "x": 1},
 		Skip:     "skip",
 		Plain:    "p",
 	}
@@ -93,7 +118,16 @@ func newLoopMap() map[string]any {
 		"mixed":  d.Mixed,
 		"str":    d.Str,
 		"arr":    d.Arr,
+		"ages":   d.Ages,
+		"byid":   d.ByID,
+		"ratio":  d.Ratio,
+		"ukeys":  d.UKeys,
+		"words":  d.Words,
+		"byname": d.ByName,
+		"nomap":  d.NoMap,
+		"flags":  d.Flags,
 		"boxed":  d.Boxed,
+		"boxed2": d.Boxed2,
 		"Plain":  d.Plain,
 	}
 }
@@ -154,6 +188,30 @@ var loopTests = []struct {
 	{"variable shadows an outer variable", "{{ for x in nums }}{{ for x in single }}{{ x }}{{ end }}{{ x }}{{ end }}", "010203"},
 	{"list of an inner loop is the outer variable", "{{ for x in lists }}{{ for x in x }}{{ x }}{{ end }}{{ end }}", "123"},
 	{"variable named as a function", "{{ for len in nums }}{{ len }}{{ end }}{{ len(nums) }}", "1233"},
+	{"index", "{{ for i, x in nums }}{{ i }}:{{ x }} {{ end }}", "0:1 1:2 2:3 "},
+	{"index in an expression", "{{ for i, x in nums }}{{ i + x }}{{ end }}", "135"},
+	{"index of an array", "{{ for i, x in arr }}{{ i }}{{ x }}{{ end }}", "0415"},
+	{"index of a range", "{{ for i, x in 5..6 }}{{ i }}{{ x }}{{ end }}", "0516"},
+	{"index of a list of unknown type", "{{ for i, x in mixed }}{{ i }}{{ x }}{{ end }}", "011a"},
+	{"index without spaces", "{{for i,x in nums}}{{i}}{{x}}{{end}}", "011223"},
+	{"index with comments", "{{ for i /* c */ , /* c */ x in nums }}{{ i }}{{ x }}{{ end }}", "011223"},
+	{"index shadows a name of the data", "{{ for name, x in nums }}{{ name }}{{ end }}{{ name }}", "012n"},
+	{"index of an outer loop in an inner loop", "{{ for i, l in lists }}{{ for j, x in l }}{{ i }}{{ j }}{{ x }} {{ end }}{{ end }}", "001 012 103 "},
+	{"map", "{{ for v in ages }}{{ v }}{{ end }}", "123"},
+	{"map with key", "{{ for k, v in ages }}{{ k }}={{ v }} {{ end }}", "al=1 bob=2 cy=3 "},
+	{"map key and value in an expression", "{{ for k, v in ages }}{{ upper(k) }}{{ v + 1 }}{{ end }}", "AL2BOB3CY4"},
+	{"map with int keys", "{{ for k, v in byid }}{{ k + 1 }}{{ v }} {{ end }}", "0n 2a 3b 11j "},
+	{"map with float keys", "{{ for k, v in ratio }}{{ k }}:{{ v }} {{ end }}", "0.5:1 2.5:2 10.5:3 "},
+	{"map with unsigned keys", "{{ for k, v in ukeys }}{{ k }}{{ v }} {{ end }}", "2b 10j 9223372036854775808x "},
+	{"map with string keys in the order of their bytes", "{{ for k, v in words }}{{ k }} {{ end }}", "B a k10 k2 é "},
+	{"map with keys of a named type", "{{ for k, v in byname }}{{ k }}{{ v }}{{ end }}", "a1b2"},
+	{"map from groupBy", "{{ for k, v in groupBy(nums, # % 2) }}{{ k }}:{{ v }} {{ end }}", "0:[2] 1:[1 3] "},
+	{"map from fromPairs", `{{ for k, v in fromPairs([["b", 2], ["a", 1]]) }}{{ k }}{{ v }}{{ end }}`, "a1b2"},
+	{"map literal", `{{ for k, v in {"b": 2, "a": 1} }}{{ k }}{{ v }}{{ end }}`, "a1b2"},
+	{"map of unknown type", "{{ for k, v in boxed2 }}{{ k }}{{ v }}{{ end }}", "x1y2"},
+	{"nil map", "a{{ for k, v in nomap }}b{{ end }}c", "ac"},
+	{"empty map", "a{{ for k, v in {} }}b{{ end }}c", "ac"},
+	{"list in a map loop", "{{ for k, v in ages }}{{ for x in single }}{{ k }}{{ v + x }}{{ end }}{{ end }}", "al1bob2cy3"},
 	{"embedded field in the body", "{{ for x in single }}{{ id }}{{ end }}", "7"},
 	{"field of an unexported embedded struct in the body", "{{ for x in single }}{{ Secret }}{{ end }}", "s"},
 	{"field without a tag in the body", "{{ for x in single }}{{ Plain }}{{ end }}", "p"},
@@ -339,9 +397,54 @@ func TestLoopParseError(t *testing.T) {
 			"unexpected token Identifier(\"of\") (t:1:12)\n | a {{ for x of nums }}b{{ end }}\n | ...........^",
 		},
 		{
-			"two variables",
-			"a {{ for x, y in nums }}b{{ end }}",
-			"unexpected token Operator(\",\") (t:1:11)\n | a {{ for x, y in nums }}b{{ end }}\n | ..........^",
+			"three variables",
+			"a {{ for x, y, z in nums }}b{{ end }}",
+			"unexpected token Operator(\",\") (t:1:14)\n | a {{ for x, y, z in nums }}b{{ end }}\n | .............^",
+		},
+		{
+			"comma without first variable",
+			"a {{ for , x in nums }}b{{ end }}",
+			"unexpected token Operator(\",\") (t:1:10)\n | a {{ for , x in nums }}b{{ end }}\n | .........^",
+		},
+		{
+			"comma without second variable",
+			"a {{ for i, in nums }}b{{ end }}",
+			"unexpected token Operator(\"in\") (t:1:13)\n | a {{ for i, in nums }}b{{ end }}\n | ............^",
+		},
+		{
+			"comma at the end",
+			"a {{ for i, }}b{{ end }}",
+			"missing variable (t:1:3)\n | a {{ for i, }}b{{ end }}\n | ..^",
+		},
+		{
+			"second variable named end",
+			"a {{ for i, end in nums }}b{{ end }}",
+			"unexpected token Identifier(\"end\") (t:1:13)\n | a {{ for i, end in nums }}b{{ end }}\n | ............^",
+		},
+		{
+			"first of two variables named nil",
+			"a {{ for nil, x in nums }}b{{ end }}",
+			"unexpected token Identifier(\"nil\") (t:1:10)\n | a {{ for nil, x in nums }}b{{ end }}\n | .........^",
+		},
+		{
+			"two variables with one name",
+			"a {{ for x, x in nums }}b{{ end }}",
+			"cannot redeclare x (t:1:13)\n | a {{ for x, x in nums }}b{{ end }}\n | ............^",
+		},
+		{
+			"wrong type of the index",
+			"a {{ for i, x in nums }}{{ i + name }}{{ end }}",
+			"invalid operation: + (mismatched types int and string) (t:1:30)\n | a {{ for i, x in nums }}{{ i + name }}{{ end }}\n | .............................^",
+		},
+		{
+			"wrong type of the key",
+			"a {{ for k, v in ages }}{{ k + v }}{{ end }}",
+			"invalid operation: + (mismatched types string and int) (t:1:30)\n | a {{ for k, v in ages }}{{ k + v }}{{ end }}\n | .............................^",
+		},
+		{
+			"map with keys that have no order",
+			"a {{ for k, v in flags }}b{{ end }}",
+			"cannot loop over map[bool]int (t:1:18)\n | a {{ for k, v in flags }}b{{ end }}\n | .................^",
 		},
 		{
 			"for without list",
@@ -457,11 +560,46 @@ func TestLoopExecuteError(t *testing.T) {
 			"cannot loop over string (t:1:15)\n | a {{ for x in mixed }}b{{ end }}\n | ..............^",
 		},
 		{
-			"list is a map",
+			"map with keys that have no order",
 			"a {{ for x in mixed }}b{{ end }}",
-			loopData{Mixed: map[string]int{}},
+			loopData{Mixed: map[bool]int{true: 1}},
 			"a ",
-			"cannot loop over map[string]int (t:1:15)\n | a {{ for x in mixed }}b{{ end }}\n | ..............^",
+			"cannot loop over map[bool]int (t:1:15)\n | a {{ for x in mixed }}b{{ end }}\n | ..............^",
+		},
+		{
+			"error in the body of a map loop",
+			"a {{ for k, v in ages }}{{ k }}{{ lists[v] }}{{ end }}",
+			*newLoopData(),
+			"a al[3]bob",
+			"index out of range: 2 (array length is 2) (t:1:40)\n | a {{ for k, v in ages }}{{ k }}{{ lists[v] }}{{ end }}\n | .......................................^",
+		},
+		{
+			"map with keys of mixed kinds",
+			"a {{ for x in mixed }}b{{ end }}",
+			loopData{Mixed: map[any]int{"a": 1, 2: 2}},
+			"a ",
+			"cannot loop over map[interface {}]int (t:1:15)\n | a {{ for x in mixed }}b{{ end }}\n | ..............^",
+		},
+		{
+			"map with integer and float keys",
+			"a {{ for x in mixed }}b{{ end }}",
+			loopData{Mixed: map[any]int{1: 1, 2.5: 2}},
+			"a ",
+			"cannot loop over map[interface {}]int (t:1:15)\n | a {{ for x in mixed }}b{{ end }}\n | ..............^",
+		},
+		{
+			"map with a nil key",
+			"a {{ for x in mixed }}b{{ end }}",
+			loopData{Mixed: map[any]int{nil: 1}},
+			"a ",
+			"cannot loop over map[interface {}]int (t:1:15)\n | a {{ for x in mixed }}b{{ end }}\n | ..............^",
+		},
+		{
+			"map with keys of an interface type that have no order",
+			"a {{ for x in mixed }}b{{ end }}",
+			loopData{Mixed: map[any]int{true: 1}},
+			"a ",
+			"cannot loop over map[interface {}]int (t:1:15)\n | a {{ for x in mixed }}b{{ end }}\n | ..............^",
 		},
 		{
 			"error in the list",
@@ -588,6 +726,41 @@ func TestLoopOptions(t *testing.T) {
 			*newLoopData(),
 			[]expr.Option{expr.Env(loopData{})},
 			"<nil>",
+		},
+		{
+			"map with keys of an interface type",
+			"{{ for k, v in mixed }}{{ k }}{{ v }}{{ end }}",
+			loopData{Mixed: map[any]int{"b": 2, "a": 1}},
+			[]expr.Option{expr.Env(loopData{})},
+			"a1b2",
+		},
+		{
+			"map with integer keys of mixed sizes",
+			"{{ for k, v in mixed }}{{ k }}{{ v }} {{ end }}",
+			loopData{Mixed: map[any]string{int8(10): "j", 2: "b", int64(-1): "n"}},
+			[]expr.Option{expr.Env(loopData{})},
+			"-1n 2b 10j ",
+		},
+		{
+			"empty map with keys of an interface type",
+			"a{{ for k, v in mixed }}b{{ end }}c",
+			loopData{Mixed: map[any]int{}},
+			[]expr.Option{expr.Env(loopData{})},
+			"ac",
+		},
+		{
+			"map with a NaN key",
+			"{{ for k, v in mixed }}{{ v }} {{ end }}",
+			loopData{Mixed: map[float64]string{math.NaN(): "n", 1: "one"}},
+			[]expr.Option{expr.Env(loopData{})},
+			"n one ",
+		},
+		{
+			"body removes an entry of the map",
+			`{{ for k, v in ages }}{{ k }}{{ v }}{{ Drop("cy") }} {{ end }}{{ len(ages) }}`,
+			*newLoopData(),
+			[]expr.Option{expr.Env(loopData{})},
+			"al1 bob2 cy3 2",
 		},
 		{
 			"map with another value type",
