@@ -72,8 +72,26 @@ var executeTests = []struct {
 	{"trim text between actions", "{{ n -}} \n {{- s }}", "1str"},
 	{"trim after comment", "{{ n /* c */ -}} b", "1b"},
 	{"trim keeps minus in text", "hello- {{- 3 -}} -world", "hello-3-world"},
+	{"trim unicode white space", "a\u00a0\f{{- n -}}\u2003\vb", "a1b"},
+	{"trim marker with unicode white space", "a {{-\u00a0n\u00a0-}} b", "a1b"},
 	{"minus without space", "{{-3}}", "-3"},
 	{"minus before braces", "{{ 5 -3}}", "2"},
+
+	{"comment", "a{{/* c */}}b", "ab"},
+	{"comment with spaces", "a{{ /* c */ }}b", "ab"},
+	{"comment across lines", "a{{/* c\nd */}}b", "ab"},
+	{"comment with braces only", "a{{/* }} */}}b", "ab"},
+	{"two comments", "a{{ /* c */ /* d */ }}b", "ab"},
+	{"line comment", "a{{ // c\n}}b", "ab"},
+	{"comment keeps white space", "a {{/* c */}} b", "a  b"},
+	{"trim around comment", "a {{- /* c */ -}} b", "ab"},
+	{"trim before comment", "a {{- /* c */}} b", "a b"},
+	{"trim after comment only", "a {{/* c */ -}} b", "a b"},
+	{"comment between actions", "{{ n }}{{/* c */}}{{ s }}", "1str"},
+	{"comment only", "{{/* c */}}", ""},
+	{"comment with a form feed", "a{{ /* c */ \f }}b", "ab"},
+	{"comment before expression", "a{{ /* c */ n }}b", "a1b"},
+	{"line comment before expression", "a{{ // c\n n }}b", "a1b"},
 }
 
 func TestExecute(t *testing.T) {

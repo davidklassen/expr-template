@@ -2,10 +2,12 @@ package template
 
 import (
 	"strings"
+	"unicode/utf8"
 
 	"github.com/expr-lang/expr"
 	"github.com/expr-lang/expr/file"
 	"github.com/expr-lang/expr/parser/lexer"
+	"github.com/expr-lang/expr/parser/utils"
 	"github.com/expr-lang/expr/vm"
 )
 
@@ -31,12 +33,7 @@ func (n *actionNode) pos() int { return n.at }
 const (
 	leftDelim  = "{{"
 	rightDelim = "}}"
-	spaces     = " \t\r\n"
 )
-
-func isSpace(c byte) bool {
-	return strings.IndexByte(spaces, c) >= 0
-}
 
 func parse(name, text string, opts []expr.Option) ([]node, error) {
 	var nodes []node
@@ -61,32 +58,47 @@ func parse(name, text string, opts []expr.Option) ([]node, error) {
 		before := text[i:at]
 		body := src[:end]
 		next := start + end + len(rightDelim)
-		if len(body) > 1 && body[0] == '-' && isSpace(body[1]) {
-			before = strings.TrimRight(before, spaces)
-			body = body[1:]
-			start++
+		if rest, ok := strings.CutPrefix(body, "-"); ok {
+			if r, _ := utf8.DecodeRuneInString(rest); utils.IsSpace(r) {
+				before = strings.TrimRightFunc(before, utils.IsSpace)
+				body = rest
+				start++
+			}
 		}
-		if n := len(body); n > 1 && body[n-1] == '-' && isSpace(body[n-2]) {
-			body = body[:n-1]
-			next = len(text) - len(strings.TrimLeft(text[next:], spaces))
+		if rest, ok := strings.CutSuffix(body, "-"); ok {
+			if r, _ := utf8.DecodeLastRuneInString(rest); utils.IsSpace(r) {
+				body = rest
+				next = len(text) - len(strings.TrimLeftFunc(text[next:], utils.IsSpace))
+			}
 		}
-		if strings.Trim(body, spaces) == "" {
+		if strings.TrimFunc(body, utils.IsSpace) == "" {
 			return nil, newError(name, text, at, "empty action")
 		}
 		if before != "" {
 			nodes = append(nodes, &textNode{at: i, text: before})
+		}
+		i = next
+		if isComment(body) {
+			continue
 		}
 		prog, err := expr.Compile(body, opts...)
 		if err != nil {
 			return nil, exprError(name, text, at, start, err)
 		}
 		nodes = append(nodes, &actionNode{at: at, start: start, prog: prog})
-		i = next
 	}
 	if i < len(text) {
 		nodes = append(nodes, &textNode{at: i, text: text[i:]})
 	}
 	return nodes, nil
+}
+
+// isComment reports whether body has comments and white space only.
+func isComment(body string) bool {
+	l := lexer.New()
+	l.Reset(file.NewSource(body))
+	tok, err := l.Next()
+	return err == nil && tok.Is(lexer.EOF)
 }
 
 // actionEnd returns the byte offset in src of the "}}" that ends the

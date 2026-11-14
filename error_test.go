@@ -85,6 +85,16 @@ func TestParseError(t *testing.T) {
 			"unclosed action (t:1:3)\n | é {{\n | ..^",
 		},
 		{
+			"unclosed comment",
+			"a {{ /* c }}",
+			"unclosed comment (t:1:3)\n | a {{ /* c }}\n | ..^",
+		},
+		{
+			"line comment before the end of the action",
+			"a {{ // c }}",
+			"unclosed action (t:1:3)\n | a {{ // c }}\n | ..^",
+		},
+		{
 			"empty action",
 			"a {{ }}",
 			"empty action (t:1:3)\n | a {{ }}\n | ..^",
@@ -103,6 +113,16 @@ func TestParseError(t *testing.T) {
 			"empty action after multi-byte characters",
 			"é\n日 {{ }}",
 			"empty action (t:2:3)\n | 日 {{ }}\n | ..^",
+		},
+		{
+			"empty action with a form feed",
+			"a {{\f}}",
+			"empty action (t:1:3)\n | a {{\f}}\n | ..^",
+		},
+		{
+			"empty action with a no-break space",
+			"a {{\u00a0}}",
+			"empty action (t:1:3)\n | a {{\u00a0}}\n | ..^",
 		},
 		{
 			"empty action with trim markers",
