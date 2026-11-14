@@ -3,6 +3,7 @@ package template
 import (
 	"fmt"
 	"io"
+	"reflect"
 	"slices"
 
 	"github.com/expr-lang/expr"
@@ -19,6 +20,8 @@ type Template struct {
 
 // New returns a new template with the given name. The options apply to
 // every expression of the template when [Template.Parse] compiles it.
+// An option that sets the type of the result, such as [expr.AsInt],
+// does not apply to the condition of an if action.
 //
 // Use [expr.Env] to declare the type of the data that [Template.Execute]
 // receives. Parse then reports unknown names and type errors. Without
@@ -51,11 +54,11 @@ func (t *Template) Parse(text string) (*Template, error) {
 
 // Execute applies the template to data and writes the output to w.
 // The expressions see data as their env. Execute prints the value of
-// each action as [fmt.Print] does.
+// each expression as [fmt.Print] does.
 //
 // If an error occurs, Execute stops, but it can have written part of
-// the output to w. The error of an expression is an [*Error]. It has
-// the position of the problem in the template. An error of w comes
+// the output to w. An error in an action is an [*Error]. It has the
+// position of the problem in the template. An error of w comes
 // back unchanged. Execute returns an error if the template is not
 // parsed.
 //
@@ -65,7 +68,11 @@ func (t *Template) Execute(w io.Writer, data any) error {
 	if !t.parsed {
 		return fmt.Errorf("template %q is not parsed", t.name)
 	}
-	for _, n := range t.nodes {
+	return t.exec(w, t.nodes, data)
+}
+
+func (t *Template) exec(w io.Writer, nodes []node, data any) error {
+	for _, n := range nodes {
 		switch n := n.(type) {
 		case *textNode:
 			if _, err := io.WriteString(w, n.text); err != nil {
@@ -78,6 +85,24 @@ func (t *Template) Execute(w io.Writer, data any) error {
 			}
 			if _, err := fmt.Fprint(w, v); err != nil {
 				return err
+			}
+		case *ifNode:
+			v, err := expr.Run(n.prog, data)
+			if err != nil {
+				return exprError(t.name, t.text, n.at, n.start, err)
+			}
+			cond, ok := v.(bool)
+			if !ok {
+				typ := "nil"
+				if v != nil {
+					typ = reflect.TypeOf(v).String()
+				}
+				return newError(t.name, t.text, n.start, conditionMessage(typ))
+			}
+			if cond {
+				if err := t.exec(w, n.body, data); err != nil {
+					return err
+				}
 			}
 		}
 	}

@@ -95,6 +95,86 @@ func TestParseError(t *testing.T) {
 			"unclosed action (t:1:3)\n | a {{ // c }}\n | ..^",
 		},
 		{
+			"end without if",
+			"a {{ end }}",
+			"unexpected {{end}} (t:1:3)\n | a {{ end }}\n | ..^",
+		},
+		{
+			"second end",
+			"{{ if true }}a{{ end }}{{ end }}",
+			"unexpected {{end}} (t:1:24)\n | {{ if true }}a{{ end }}{{ end }}\n | .......................^",
+		},
+		{
+			"if without end",
+			"a {{ if true }} b",
+			"unclosed if (t:1:3)\n | a {{ if true }} b\n | ..^",
+		},
+		{
+			"inner if without end",
+			"{{ if true }}\n{{ if false }}{{ end }}",
+			"unclosed if (t:1:1)\n | {{ if true }}\n | ^",
+		},
+		{
+			"if without condition",
+			"a {{ if }}b{{ end }}",
+			"missing condition (t:1:3)\n | a {{ if }}b{{ end }}\n | ..^",
+		},
+		{
+			"if with a comment only",
+			"a {{ if /* c */ }}b{{ end }}",
+			"missing condition (t:1:3)\n | a {{ if /* c */ }}b{{ end }}\n | ..^",
+		},
+		{
+			"end with an expression",
+			"{{ if true }}{{ end + 1 }}",
+			"unexpected token Operator(\"+\") (t:1:21)\n | {{ if true }}{{ end + 1 }}\n | ....................^",
+		},
+		{
+			"end with an expression and without if",
+			"a {{ end + 1 }}",
+			"unexpected token Operator(\"+\") (t:1:10)\n | a {{ end + 1 }}\n | .........^",
+		},
+		{
+			"token after end after multi-byte characters",
+			"{{ if true }}{{ /* ééé */ end x }}",
+			"unexpected token Identifier(\"x\") (t:1:31)\n | {{ if true }}{{ /* ééé */ end x }}\n | ..............................^",
+		},
+		{
+			"error in a condition after multi-byte characters",
+			"{{ /* ééé */ if nn }}",
+			"unknown name nn (t:1:17)\n | {{ /* ééé */ if nn }}\n | ................^",
+		},
+		{
+			"condition of a named boolean type",
+			"a {{ if mb }}b{{ end }}",
+			"non-bool expression (type template.myBool) used as condition (t:1:9)\n | a {{ if mb }}b{{ end }}\n | ........^",
+		},
+		{
+			"condition is a pointer to a boolean",
+			"a {{ if p }}b{{ end }}",
+			"non-bool expression (type *bool) used as condition (t:1:9)\n | a {{ if p }}b{{ end }}\n | ........^",
+		},
+		{
+			"condition is not a boolean",
+			"a {{ if n }}b{{ end }}",
+			"non-bool expression (type int) used as condition (t:1:9)\n | a {{ if n }}b{{ end }}\n | ........^",
+		},
+		{
+			"condition is not a boolean after a trim marker",
+			"a {{- if  s -}} b{{ end }}",
+			"non-bool expression (type string) used as condition (t:1:11)\n | a {{- if  s -}} b{{ end }}\n | ..........^",
+		},
+		{
+			"error in a condition",
+			"a {{ if nn }}b{{ end }}",
+			"unknown name nn (t:1:9)\n | a {{ if nn }}b{{ end }}\n | ........^",
+		},
+		{
+			"error in the body of an if",
+			"{{ if true }}\n{{ nn }}{{ end }}",
+			"unknown name nn (t:2:4)\n | {{ nn }}{{ end }}\n | ...^",
+		},
+		{
 			"empty action",
 			"a {{ }}",
 			"empty action (t:1:3)\n | a {{ }}\n | ..^",
@@ -181,6 +261,16 @@ func TestExecuteError(t *testing.T) {
 			"index out of range: 5 (array length is 2) (t:1:21)\n | é→ {{ \"日\" + string(l[5]) }}\n | ....................^",
 		},
 		{
+			"in a condition",
+			"a {{ if l[5] == 1 }}b{{ end }}",
+			"index out of range: 5 (array length is 2) (t:1:10)\n | a {{ if l[5] == 1 }}b{{ end }}\n | .........^",
+		},
+		{
+			"in the body of an if",
+			"{{ if true }}\n{{ l[5] }}{{ end }}",
+			"index out of range: 5 (array length is 2) (t:2:5)\n | {{ l[5] }}{{ end }}\n | ....^",
+		},
+		{
 			"error of a function",
 			"a {{ fail() }}",
 			"failed (t:1:6)\n | a {{ fail() }}\n | .....^",
@@ -213,6 +303,39 @@ var failFunc = expr.Function("fail", func(...any) (any, error) {
 var boomFunc = expr.Function("boom", func(...any) (any, error) {
 	panic("boom")
 }, new(func() string))
+
+func TestExecuteConditionError(t *testing.T) {
+	tests := []struct {
+		name string
+		data map[string]any
+		want string
+	}{
+		{
+			"int",
+			map[string]any{"a": 1},
+			"non-bool expression (type int) used as condition (t:1:9)\n | x {{ if a }}b{{ end }}\n | ........^",
+		},
+		{
+			"nil",
+			map[string]any{},
+			"non-bool expression (type nil) used as condition (t:1:9)\n | x {{ if a }}b{{ end }}\n | ........^",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, err := execute(t, "x {{ if a }}b{{ end }}", tt.data)
+			if err == nil {
+				t.Fatal("no error")
+			}
+			if err.Error() != tt.want {
+				t.Errorf("got\n%s\nwant\n%s", err, tt.want)
+			}
+			if want := "x "; got != want {
+				t.Errorf("got output %q, want %q", got, want)
+			}
+		})
+	}
+}
 
 func TestExecuteErrorWithoutPosition(t *testing.T) {
 	_, err := execute(t, "ab {{   a }}", map[string]any{"a": "s"}, expr.AsBool())

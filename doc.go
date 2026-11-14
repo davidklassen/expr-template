@@ -1,12 +1,31 @@
 // Package template implements text templates whose actions are [expr]
 // expressions.
 //
-// A template is text with actions. An action is an expression between
-// "{{" and "}}". Execute copies the text to the output and replaces
-// each action with the value of its expression:
+// A template is text with actions. An action is written between "{{"
+// and "}}". Execute copies the text to the output and runs the actions.
+// Most actions are an expression, and Execute prints its value:
 //
 //	t := template.Must(template.New("hello").Parse("Hello, {{ name }}!\n"))
 //	err := t.Execute(os.Stdout, map[string]any{"name": "Alice"})
+//
+// An if action and an end action enclose a part of the template. The
+// expression after the word if is the condition. Execute runs the
+// enclosed part only when the condition is true:
+//
+//	{{ if len(items) > 0 }}You have {{ len(items) }} items.{{ end }}
+//
+// If actions can be nested.
+//
+// The condition must be a boolean. Any other value, including nil, is
+// an error. Parse reports the error when it knows the type of the
+// condition. Otherwise Execute reports it. To test whether a value is
+// set, compare it with nil: "{{ if name != nil }}".
+//
+// An action that starts with the word if or end is always an if action
+// or an end action. To start an expression with one of these words, put
+// the expression in parentheses. "{{ (end) }}" prints the value of the
+// name end. "{{ (if a { 1 } else { 2 }) }}" is the if expression of
+// expr.
 //
 // A trim marker removes the white space around an action. A minus
 // sign and white space after "{{" remove all white space before the

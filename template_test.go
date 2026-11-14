@@ -8,10 +8,14 @@ import (
 	"github.com/expr-lang/expr"
 )
 
+type myBool bool
+
 type env struct {
-	N int    `expr:"n"`
-	S string `expr:"s"`
-	L []int  `expr:"l"`
+	N  int    `expr:"n"`
+	S  string `expr:"s"`
+	L  []int  `expr:"l"`
+	MB myBool `expr:"mb"`
+	P  *bool  `expr:"p"`
 }
 
 var testData = env{
@@ -92,6 +96,22 @@ var executeTests = []struct {
 	{"comment with a form feed", "a{{ /* c */ \f }}b", "ab"},
 	{"comment before expression", "a{{ /* c */ n }}b", "a1b"},
 	{"line comment before expression", "a{{ // c\n n }}b", "a1b"},
+
+	{"if true", "a{{ if n == 1 }}b{{ end }}c", "abc"},
+	{"if false", "a{{ if n == 2 }}b{{ end }}c", "ac"},
+	{"if with actions", "{{ if true }}{{ n }}-{{ s }}{{ end }}", "1-str"},
+	{"if with empty body", "a{{ if true }}{{ end }}b", "ab"},
+	{"if without spaces", "{{if true}}a{{end}}", "a"},
+	{"if across lines", "{{ if n ==\n 1 }}a{{ end }}", "a"},
+	{"if with comment", "{{ if /* c */ true }}a{{ end /* c */ }}", "a"},
+	{"nested if", "{{ if true }}a{{ if false }}b{{ end }}c{{ end }}d", "acd"},
+	{"nested if in false", "{{ if false }}a{{ if true }}b{{ end }}c{{ end }}d", "d"},
+	{"if after if", "{{ if true }}a{{ end }}{{ if true }}b{{ end }}", "ab"},
+	{"trim in if", "a {{- if true -}} b {{- end -}} c", "abc"},
+	{"if with parentheses", "{{ if(n == 1) }}a{{ end }}", "a"},
+	{"if expression of expr", "{{ (if n == 1 { 2 } else { 3 }) }}", "2"},
+	{"false if does not run its body", "a{{ if false }}{{ l[5] }}{{ end }}b", "ab"},
+	{"keyword in string", `{{ "if" }}{{ "end" }}`, "ifend"},
 }
 
 func TestExecute(t *testing.T) {
@@ -105,6 +125,53 @@ func TestExecute(t *testing.T) {
 				t.Errorf("got  %q\nwant %q", got, tt.want)
 			}
 		})
+	}
+}
+
+func TestKeywordAsName(t *testing.T) {
+	data := map[string]any{"end": 1, "ending": 2, "iffy": 3, "t": true, "If": 4, "IF": 5}
+	tests := []struct {
+		name string
+		text string
+		want string
+	}{
+		{"in parentheses", "{{ (end) }}", "1"},
+		{"not the first word", "{{ 1 + end }}", "2"},
+		{"in a condition", "{{ if end == 1 }}a{{ end }}", "a"},
+		{"prefix of a name", "{{ ending }}{{ iffy }}", "23"},
+		{"if in another case", "{{ If }}{{ IF }}", "45"},
+		{"end in another case", "{{ if t }}{{ END }}{{ end }}", "<nil>"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, err := execute(t, tt.text, data)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got != tt.want {
+				t.Errorf("got  %q\nwant %q", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestConditionIgnoresResultType(t *testing.T) {
+	data := map[string]any{"a": true, "n": 1}
+	got, err := execute(t, "{{ if a }}x{{ end }}{{ n }}", data, expr.AsInt())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := "x1"; got != want {
+		t.Errorf("got %q, want %q", got, want)
+	}
+
+	_, err = execute(t, "x {{ if b }}y{{ end }}", data, expr.AsBool())
+	if err == nil {
+		t.Fatal("no error")
+	}
+	want := "non-bool expression (type nil) used as condition (t:1:9)\n | x {{ if b }}y{{ end }}\n | ........^"
+	if err.Error() != want {
+		t.Errorf("got\n%s\nwant\n%s", err, want)
 	}
 }
 
