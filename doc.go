@@ -1,16 +1,16 @@
 // Package template implements text templates whose actions are [expr]
 // expressions.
 //
-// A template is text with actions. An action is written between "{{"
-// and "}}". Execute copies the text to the output and runs the actions.
-// Most actions are an expression, and Execute prints its value:
+// A template is text with actions. An action is written between "{{" and "}}".
+// Execute copies the text to the output and runs the actions. Most actions are
+// an expression, and Execute prints its value:
 //
 //	t := template.Must(template.New("hello").Parse("Hello, {{ name }}!\n"))
 //	err := t.Execute(os.Stdout, map[string]any{"name": "Alice"})
 //
-// An if action runs a part of the template only when a condition is
-// true. It has the forms below. T1 and T0 stand for parts of the
-// template: text and actions.
+// An if action runs a part of the template only when a condition is true. It
+// has the forms below. T1 and T0 stand for parts of the template: text and
+// actions.
 //
 //	{{ if condition }} T1 {{ end }}
 //		If the condition is true, T1 is executed. Otherwise no output
@@ -28,31 +28,48 @@
 //		The effect is the same as writing
 //			{{ if condition }} T1 {{ else }}{{ if condition }} T0 {{ end }}{{ end }}
 //
-// An action that starts with the word if, else, or end is always an
-// action of that kind. An expression that starts with the word if or
-// end must be in parentheses. "{{ (end) }}" prints the value of the
-// name end. "{{ (if a { 1 } else { 2 }) }}" is the if expression of
-// expr.
+// A for action runs a part of the template for each element of a list.
 //
-// A trim marker removes the white space around an action. A minus
-// sign and white space after "{{" remove all white space before the
-// action. White space and a minus sign before "}}" remove all white
-// space after it:
+//	{{ for x in list }} T1 {{ end }}
+//		The list is an expression, and its value must be a slice or
+//		an array. Any other value, including nil, is an error. T1 is
+//		executed for each element of the list, in order. In T1, the
+//		variable x has the value of the element. If the list is
+//		empty, no output is generated.
+//
+// The variable of a for action exists only in T1. There it shadows a name of
+// the data, a function, or the variable of an enclosing for action with the
+// same name. If Parse knows the type of the list, it knows the type of the
+// variable, and it reports a wrong use of the variable.
+//
+// In T1 of a for action, the expressions read a copy of the data. If a method
+// of the data changes a field of the data, an expression in T1 that reads this
+// field gets the value from before the change. Without [expr.Env], a name that
+// the data does not have is nil in T1.
+//
+// An action that starts with the word if, else, end, or for is always an action
+// of that kind. An expression that starts with the word if, end, or for must be
+// in parentheses. "{{ (end) }}" prints the value of the name end. "{{ (if a { 1
+// } else { 2 }) }}" is the if expression of expr.
+//
+// A trim marker removes the white space around an action. A minus sign and
+// white space after "{{" remove all white space before the action. White space
+// and a minus sign before "}}" remove all white space after it:
 //
 //	"a  {{- 1 -}}  b" prints "a1b"
 //
-// White space is any character that expr treats as white space, such as
-// a space, a tab, or a newline. Without the white space, the minus sign
-// is part of the expression: "{{-3}}" prints "-3".
+// White space is any character that expr treats as white space, such as a
+// space, a tab, or a newline. Without the white space, the minus sign is part
+// of the expression: "{{-3}}" prints "-3".
 //
-// An action can contain a comment, in the comment syntax of expr:
-// /* text */, or // text up to the end of the line. An action that
-// contains only a comment prints nothing. It can have trim markers:
+// An action can contain a comment, in the comment syntax of expr: /* text */,
+// or // text up to the end of the line. An action that contains only a comment
+// prints nothing. It can have trim markers:
 //
 //	"a {{- /* a comment */ -}} b" prints "ab"
 //
-// A // comment runs to the end of the line, so the closing "}}" must be
-// on the next line.
+// A // comment runs to the end of the line, so the closing "}}" must be on the
+// next line.
 //
 // The package does not escape the output.
 //

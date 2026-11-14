@@ -58,3 +58,23 @@ func ExampleError() {
 	//  | ..........^
 	// hello 1 11
 }
+
+func Example_for() {
+	type Item struct {
+		Name  string  `expr:"name"`
+		Price float64 `expr:"price"`
+	}
+	type Env struct {
+		Items []Item `expr:"items"`
+	}
+
+	t := template.Must(template.New("order", expr.Env(Env{})).Parse(
+		"{{ for item in items }}{{ item.name }}: {{ item.price }}\n{{ end }}"))
+	err := t.Execute(os.Stdout, Env{Items: []Item{{"tea", 2.5}, {"cake", 4}}})
+	if err != nil {
+		log.Fatal(err)
+	}
+	// Output:
+	// tea: 2.5
+	// cake: 4
+}

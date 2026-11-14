@@ -18,13 +18,12 @@ type Template struct {
 	nodes  []node
 }
 
-// New returns a new template with the given name. The options apply to
-// every expression of the template when [Template.Parse] compiles it.
+// New returns a new template with the given name. The options apply to every
+// expression of the template when [Template.Parse] compiles it.
 //
 // Use [expr.Env] to declare the type of the data that [Template.Execute]
-// receives. Parse then reports type errors, and names that the data
-// does not have. Without expr.Env, Parse does not check the names. A
-// name that the data does not have then gets the value nil in Execute.
+// receives. Parse then reports type errors, and names that the data does not
+// have. Without expr.Env, Parse does not check the names.
 func New(name string, opts ...expr.Option) *Template {
 	return &Template{name: name, opts: slices.Clone(opts)}
 }
@@ -34,8 +33,7 @@ func (t *Template) Name() string {
 	return t.name
 }
 
-// Parse parses text as the body of the template and compiles its
-// expressions.
+// Parse parses text as the body of the template and compiles its expressions.
 //
 // If an error occurs, Parse returns nil and the error. The error is an
 // [*Error]. It has the position of the problem in text.
@@ -50,17 +48,17 @@ func (t *Template) Parse(text string) (*Template, error) {
 	return t, nil
 }
 
-// Execute applies the template to data and writes the output to w.
-// The expressions see data as their env. Execute prints the value of
-// each expression as [fmt.Print] does.
+// Execute applies the template to data and writes the output to w. The
+// expressions see data as their env. Execute prints the value of each
+// expression as [fmt.Print] does.
 //
-// If an error occurs, Execute stops, but it can have written part of
-// the output to w. An error in an action is an [*Error]. It has the
-// position of the problem in the template. If a write to w fails,
-// Execute returns the error of that write as it is.
+// If an error occurs, Execute stops, but it can have written part of the output
+// to w. An error in an action is an [*Error]. It has the position of the
+// problem in the template. If a write to w fails, Execute returns the error of
+// that write as it is.
 //
-// A template may be executed safely in parallel. If parallel executions
-// share a Writer, the output may be interleaved.
+// A template may be executed safely in parallel. If parallel executions share a
+// Writer, the output may be interleaved.
 func (t *Template) Execute(w io.Writer, data any) error {
 	if !t.parsed {
 		return fmt.Errorf("template %q is not parsed", t.name)
@@ -90,11 +88,7 @@ func (t *Template) exec(w io.Writer, nodes []node, data any) error {
 			}
 			cond, ok := v.(bool)
 			if !ok {
-				typ := "nil"
-				if v != nil {
-					typ = reflect.TypeOf(v).String()
-				}
-				return newError(t.name, t.text, n.start, conditionMessage(typ))
+				return newError(t.name, t.text, n.start, conditionMessage(typeName(v)))
 			}
 			body := n.elseBody
 			if cond {
@@ -103,14 +97,33 @@ func (t *Template) exec(w io.Writer, nodes []node, data any) error {
 			if err := t.exec(w, body, data); err != nil {
 				return err
 			}
+		case *forNode:
+			v, err := expr.Run(n.prog, data)
+			if err != nil {
+				return exprError(t.name, t.text, n.at, n.start, err)
+			}
+			list := reflect.ValueOf(v)
+			if list.Kind() != reflect.Slice && list.Kind() != reflect.Array {
+				return newError(t.name, t.text, n.start, loopMessage(typeName(v)))
+			}
+			if list.Len() == 0 {
+				continue
+			}
+			loop := newLoopEnv(data)
+			for i := range list.Len() {
+				loop[n.name] = list.Index(i).Interface()
+				if err := t.exec(w, n.body, loop); err != nil {
+					return err
+				}
+			}
 		}
 	}
 	return nil
 }
 
-// Must is a helper that wraps a call to a function returning
-// ([*Template], error) and panics if the error is non-nil. It is
-// intended for use in variable initializations such as
+// Must is a helper that wraps a call to a function returning ([*Template],
+// error) and panics if the error is non-nil. It is intended for use in variable
+// initializations such as
 //
 //	var t = template.Must(template.New("name").Parse("text"))
 func Must(t *Template, err error) *Template {

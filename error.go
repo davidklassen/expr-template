@@ -24,15 +24,15 @@ func (e *Error) Error() string {
 	return fmt.Sprintf("%s (%s:%d:%d)%s", e.Message, e.Name, e.Line, e.Column, e.snippet)
 }
 
-// Unwrap returns the cause of e, or nil if it has none. If a function
-// that the template calls returns an error, that error is the cause.
+// Unwrap returns the cause of e, or nil if it has none. If a function that the
+// template calls returns an error, that error is the cause.
 func (e *Error) Unwrap() error {
 	return e.cause
 }
 
-// newError returns an error at the byte offset pos of text. expr
-// computes the line, the column, and the snippet, so that they have the
-// same form as in an expr error.
+// newError returns an error at the byte offset pos of text. expr computes the
+// line, the column, and the snippet, so that they have the same form as in an
+// expr error.
 func newError(name, text string, pos int, message string) *Error {
 	fe := &file.Error{Location: file.Location{From: utf8.RuneCountInString(text[:pos])}}
 	fe.Bind(file.NewSource(text))
@@ -45,17 +45,17 @@ func newError(name, text string, pos int, message string) *Error {
 	}
 }
 
-// exprError returns an error for the action at the byte offset at of
-// text, whose expression starts at start. It points to the position
-// that err has in the expression, or to the action if err has none.
+// exprError returns an error for the action at the byte offset at of text,
+// whose expression starts at start. It points to the position that err has in
+// the expression, or to the action if err has none.
 func exprError(name, text string, at, start int, err error) *Error {
 	fe, ok := errors.AsType[*file.Error](err)
 	if !ok {
 		return newError(name, text, at, err.Error())
 	}
 	// expr uses the zero value of Location when it has no position for a
-	// run-time error. The error then points to the action. A real
-	// location is never the zero value: its end is after its start.
+	// run-time error. The error then points to the action. A real location is
+	// never the zero value: its end is after its start.
 	pos := at
 	if fe.Location != (file.Location{}) {
 		pos = start + byteOffset(text[start:], fe.From)

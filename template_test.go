@@ -130,7 +130,12 @@ var executeTests = []struct {
 	{"trim around else if", "{{ if false }} a {{- else if true -}} b {{- end }}", "b"},
 	{"true if does not evaluate else if", "{{ if true }}a{{ else if l[5] == 1 }}b{{ end }}", "a"},
 	{"true else if does not evaluate the next else if", "{{ if false }}a{{ else if true }}b{{ else if l[5] == 1 }}c{{ end }}", "b"},
-	{"keyword in string", `{{ "if" }}{{ "end" }}`, "ifend"},
+	{"keyword in string", `{{ "if" }}{{ "end" }}{{ "for" }}`, "ifendfor"},
+
+	{"for", "{{ for x in l }}{{ x }},{{ end }}", "1,2,"},
+	{"for with if", "{{ for x in l }}{{ if x == n }}a{{ else }}b{{ end }}{{ end }}", "ab"},
+	{"nested for", "{{ for x in l }}{{ for y in l }}{{ x * y }} {{ end }}{{ end }}", "1 2 2 4 "},
+	{"trim in for", "{{ for x in l -}} {{ x }} {{- end }}", "12"},
 }
 
 func TestExecute(t *testing.T) {
@@ -240,6 +245,9 @@ func TestMust(t *testing.T) {
 
 func FuzzParse(f *testing.F) {
 	for _, tt := range executeTests {
+		f.Add(tt.text)
+	}
+	for _, tt := range loopTests {
 		f.Add(tt.text)
 	}
 	f.Fuzz(func(t *testing.T, text string) {
