@@ -110,21 +110,21 @@ func (t *Template) execFor(w io.Writer, n *forNode, data any) error {
 	if err != nil {
 		return exprError(t.name, t.text, n.at, n.start, err)
 	}
-	switch list := reflect.ValueOf(v); list.Kind() {
+	switch coll := reflect.ValueOf(v); coll.Kind() {
 	case reflect.Slice, reflect.Array:
 		loop := newLoopEnv(data)
-		for i := range list.Len() {
+		for i := range coll.Len() {
 			if n.key != "" {
 				loop[n.key] = i
 			}
-			loop[n.elem] = list.Index(i).Interface()
+			loop[n.elem] = coll.Index(i).Interface()
 			if err := t.exec(w, n.body, loop); err != nil {
 				return err
 			}
 		}
 		return nil
 	case reflect.Map:
-		entries, ok := sortedEntries(list)
+		entries, ok := sortedEntries(coll)
 		if !ok {
 			return newError(t.name, t.text, n.start, sortMessage(typeName(v)))
 		}

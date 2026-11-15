@@ -49,14 +49,14 @@
 //		The effect is the same as writing
 //			{{ if condition }} T1 {{ else }}{{ if condition }} T0 {{ end }}{{ end }}
 //
-//	{{ for x in list }} T1 {{ end }}
-//		The list is an expression, and its value must be a slice, an
-//		array, or a map. Any other value, including nil, is an error.
-//		T1 is executed for each element of the list. In T1, the
-//		variable x has the value of the element. If the list is
-//		empty, no output is generated.
+//	{{ for x in collection }} T1 {{ end }}
+//		The collection is an expression, and its value must be a
+//		slice, an array, or a map. Any other value, including nil, is
+//		an error. T1 is executed for each element of the collection.
+//		In T1, the variable x has the value of the element. If the
+//		collection is empty, no output is generated.
 //
-//	{{ for i, x in list }} T1 {{ end }}
+//	{{ for i, x in collection }} T1 {{ end }}
 //		This form has a second variable, i. For a slice or an array,
 //		i has the index of the element, from 0. For a map, i has the
 //		key of the element.
@@ -73,8 +73,8 @@
 //
 // The variables of a for action exist only in T1. A variable shadows a name of
 // the data, a function, or a variable of an enclosing for action with the same
-// name. If Parse knows the type of the list, it type-checks the uses of the
-// variables.
+// name. If Parse knows the type of the collection, it type-checks the uses of
+// the variables.
 //
 // Inside a for action, expressions read a copy of the data that is made when
 // the loop starts. If a method called in the loop changes a field of the data,

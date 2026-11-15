@@ -38,7 +38,7 @@ type ifNode struct {
 
 type forNode struct {
 	at    int // byte offset of the "{{" in the template text
-	start int // byte offset of the list expression in the template text
+	start int // byte offset of the collection expression in the template text
 	prog  *vm.Program
 	key   string // variable for the index or the map key, "" if not declared
 	elem  string // variable for the element
@@ -152,8 +152,8 @@ func (p *parser) parseIf(a *action, cond lexer.Token) (*ifNode, error) {
 	return n, nil
 }
 
-// compile compiles the condition or the list of the action a. first is the
-// first token of that expression. compile returns the program and the byte
+// compile compiles the condition or the collection of the action a. first is
+// the first token of that expression. compile returns the program and the byte
 // offset of the expression in the text of the template.
 func (p *parser) compile(a *action, first lexer.Token) (*vm.Program, int, error) {
 	offset := byteOffset(a.src, first.From)
@@ -191,30 +191,30 @@ func (p *parser) parseFor(a *action) (*forNode, error) {
 	}
 	first := a.tokens[i+1]
 	if first.Is(lexer.EOF) {
-		return nil, p.error(a.at, "missing list")
+		return nil, p.error(a.at, "missing collection")
 	}
 	prog, start, err := p.compile(a, first)
 	if err != nil {
 		return nil, err
 	}
-	// The loop variables get their types from the nature of the list, which is
-	// the type information of the expr checker. It has the element type even
-	// when the Go type of the list is []any, as for the result of the map
-	// builtin. If expr does not know the type of the list, the variables are
-	// untyped, and Execute checks the value of the list.
+	// The loop variables get their types from the nature of the collection,
+	// which is the type information of the expr checker. It has the element
+	// type even when the Go type of the collection is []any, as for the result
+	// of the map builtin. If expr does not know the type of the collection, the
+	// variables are untyped, and Execute checks the value of the collection.
 	var c nature.Cache
 	var keyType, elemType nature.Nature
-	switch list := prog.Node().Nature(); {
-	case list.IsArray():
-		keyType, elemType = c.FromType(reflect.TypeFor[int]()), list.Elem(&c)
-	case list.IsMap():
-		if !canOrder(list.Type.Key()) {
-			return nil, p.error(start, sortMessage(list.Type.String()))
+	switch coll := prog.Node().Nature(); {
+	case coll.IsArray():
+		keyType, elemType = c.FromType(reflect.TypeFor[int]()), coll.Elem(&c)
+	case coll.IsMap():
+		if !canOrder(coll.Type.Key()) {
+			return nil, p.error(start, sortMessage(coll.Type.String()))
 		}
-		keyType, elemType = list.Key(&c), list.Elem(&c)
-	case list.Type == nil || list.Kind == reflect.Interface:
+		keyType, elemType = coll.Key(&c), coll.Elem(&c)
+	case coll.Type == nil || coll.Kind == reflect.Interface:
 	default:
-		return nil, p.error(start, loopMessage(list.Type.String()))
+		return nil, p.error(start, loopMessage(coll.Type.String()))
 	}
 	opts := p.opts
 	p.opts = append(slices.Clip(opts), withLoopVar(elem.Value, elemType))

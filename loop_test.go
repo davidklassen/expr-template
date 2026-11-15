@@ -356,17 +356,17 @@ var loopParseErrorTests = []struct {
 	want string
 }{
 	{
-		"list is a string",
+		"collection is a string",
 		"a {{ for x in name }}{{ end }}",
 		"cannot loop over string (t:1:15)\n | a {{ for x in name }}{{ end }}\n | ..............^",
 	},
 	{
-		"list of an inner loop is not a list",
+		"collection of an inner loop is an int",
 		"a {{ for x in nums }}{{ for y in x }}{{ end }}{{ end }}",
 		"cannot loop over int (t:1:34)\n | a {{ for x in nums }}{{ for y in x }}{{ end }}{{ end }}\n | .................................^",
 	},
 	{
-		"error in the list",
+		"error in the collection",
 		"a {{ for x in nope }}{{ end }}",
 		"unknown name nope (t:1:15)\n | a {{ for x in nope }}{{ end }}\n | ..............^",
 	},
@@ -461,9 +461,9 @@ var loopParseErrorTests = []struct {
 		"cannot sort keys of map[bool]int (t:1:18)\n | a {{ for k, v in flags }}b{{ end }}\n | .................^",
 	},
 	{
-		"for without list",
+		"for without collection",
 		"a {{ for x in }}b{{ end }}",
-		"missing list (t:1:3)\n | a {{ for x in }}b{{ end }}\n | ..^",
+		"missing collection (t:1:3)\n | a {{ for x in }}b{{ end }}\n | ..^",
 	},
 	{
 		"variable named end",
@@ -550,14 +550,14 @@ func TestLoopExecuteError(t *testing.T) {
 		want string
 	}{
 		{
-			"list is nil",
+			"collection is nil",
 			"a {{ for x in mixed }}b{{ end }}",
 			loopData{},
 			"a ",
 			"cannot loop over nil (t:1:15)\n | a {{ for x in mixed }}b{{ end }}\n | ..............^",
 		},
 		{
-			"list is a string",
+			"collection is a string",
 			"a {{ for x in mixed }}b{{ end }}",
 			loopData{Mixed: "s"},
 			"a ",
@@ -599,7 +599,7 @@ func TestLoopExecuteError(t *testing.T) {
 			"cannot sort keys of map[interface {}]int (t:1:15)\n | a {{ for x in mixed }}b{{ end }}\n | ..............^",
 		},
 		{
-			"error without a position in the list",
+			"error without a position in the collection",
 			"a {{ for x in (if mixed { [1] } else { [2] }) }}b{{ end }}",
 			loopData{Mixed: 5},
 			"a ",
@@ -620,7 +620,7 @@ func TestLoopExecuteError(t *testing.T) {
 			"cannot sort keys of map[interface {}]int (t:1:15)\n | a {{ for x in mixed }}b{{ end }}\n | ..............^",
 		},
 		{
-			"error in the list",
+			"error in the collection",
 			"a {{ for x in lists[5] }}b{{ end }}",
 			*newLoopData(),
 			"a ",
