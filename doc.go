@@ -1,16 +1,31 @@
-// Package template implements text templates whose actions are [expr]
-// expressions.
+// Package template implements text templates with [expr] expressions.
 //
 // A template is text with actions. An action is written between "{{" and "}}".
-// Execute copies the text to the output and runs the actions. Most actions are
-// an expression, and Execute prints its value:
+// Execute copies the text to the output and runs the actions:
 //
 //	t := template.Must(template.New("hello").Parse("Hello, {{ name }}!\n"))
 //	err := t.Execute(os.Stdout, map[string]any{"name": "Alice"})
 //
-// An if action runs a part of the template only when a condition is true. It
-// has the forms below. T1 and T0 stand for parts of the template: text and
-// actions.
+// The expressions of a template read their names from the data that Execute
+// receives. The data is a map or a struct, as the env of expr is. The options
+// of [New] are options of expr. With [expr.Env], Parse knows the type of the
+// data and type-checks the template.
+//
+// The package does not escape the output.
+//
+// # Actions
+//
+// Here is the list of actions.
+//
+//	{{ expression }}
+//		The value of the expression is printed as fmt.Print prints
+//		it, so nil is printed as <nil>.
+//
+//	{{ /* a comment */ }}
+//		A comment in the syntax of expr: /* text */, or // text up
+//		to the end of the line. An action that contains only a
+//		comment prints nothing. After a // comment, the closing "}}"
+//		must be on the next line.
 //
 //	{{ if condition }} T1 {{ end }}
 //		If the condition is true, T1 is executed. Otherwise no output
@@ -28,8 +43,6 @@
 //		The effect is the same as writing
 //			{{ if condition }} T1 {{ else }}{{ if condition }} T0 {{ end }}{{ end }}
 //
-// A for action runs a part of the template for each element of a list.
-//
 //	{{ for x in list }} T1 {{ end }}
 //		The list is an expression, and its value must be a slice, an
 //		array, or a map. Any other value, including nil, is an error.
@@ -42,46 +55,38 @@
 //		i has the index of the element, from 0. For a map, i has the
 //		key of the element.
 //
-// For a map, T1 is executed for the elements in the order of their keys. The
-// keys must all be strings, all be integers, or all be floats. Numbers are in
-// the order of their values. Strings are in the order of their bytes, so "B"
-// comes before "a".
+// An action that starts with if, else, end, or for is always that kind of
+// action. To start an expression with one of these words, put it in
+// parentheses: "{{ (end) }}" prints the value of the name end, and
+// "{{ (if a { 1 } else { 2 }) }}" is the if expression of expr.
 //
-// The variables of a for action exist only in T1. There a variable shadows a
-// name of the data, a function, or the variable of an enclosing for action with
-// the same name. If Parse knows the type of the list, it knows the types of the
-// variables, and it reports a wrong use of a variable.
+// # Loops
 //
-// In T1 of a for action, the expressions read a copy of the data. If a method
-// of the data changes a field of the data, an expression in T1 that reads this
-// field gets the value from before the change. Without [expr.Env], a name that
-// the data does not have is nil in T1.
+// For a map, T1 is executed for the elements in sorted key order. The keys must
+// all be strings, all be integers, or all be floats.
 //
-// An action that starts with the word if, else, end, or for is always an action
-// of that kind. An expression that starts with the word if, end, or for must be
-// in parentheses. "{{ (end) }}" prints the value of the name end. "{{ (if a { 1
-// } else { 2 }) }}" is the if expression of expr.
+// The variables of a for action exist only in T1. A variable shadows a name of
+// the data, a function, or a variable of an enclosing for action with the same
+// name. If Parse knows the type of the list, it type-checks the uses of the
+// variables.
 //
-// A trim marker removes the white space around an action. A minus sign and
-// white space after "{{" remove all white space before the action. White space
-// and a minus sign before "}}" remove all white space after it:
+// Inside a for action, expressions read a copy of the data that is made when
+// the loop starts. If a method called in the loop changes a field of the data,
+// the expressions in the loop still read the old value. Without [expr.Env], a
+// name that the data does not have is nil inside a for action, even when it is
+// an error outside one.
+//
+// # Text and spaces
+//
+// Trim markers remove the white space around an action. "{{- " removes all
+// white space before the action, and " -}}" removes all white space after it:
 //
 //	"a  {{- 1 -}}  b" prints "a1b"
 //
-// White space is any character that expr treats as white space, such as a
-// space, a tab, or a newline. Without the white space, the minus sign is part
-// of the expression: "{{-3}}" prints "-3".
-//
-// An action can contain a comment, in the comment syntax of expr: /* text */,
-// or // text up to the end of the line. An action that contains only a comment
-// prints nothing. It can have trim markers:
-//
-//	"a {{- /* a comment */ -}} b" prints "ab"
-//
-// A // comment runs to the end of the line, so the closing "}}" must be on the
-// next line.
-//
-// The package does not escape the output.
+// The minus sign must have white space between it and the expression. Otherwise
+// it is part of the expression: "{{-3}}" prints "-3". White space is any
+// character that expr treats as white space, such as a space, a tab, or a
+// newline.
 //
 // [expr]: https://expr-lang.org/docs/language-definition
 package template

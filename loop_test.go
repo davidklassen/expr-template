@@ -269,14 +269,15 @@ func TestLoopMethods(t *testing.T) {
 	}
 }
 
-// TestLoopEnv checks that an expression gives the same result in the body of a
-// loop as outside a loop: the loop env has the names of the env, with the same
-// types.
+// TestLoopEnv checks that an expression gives the same result inside a loop
+// body as outside it. This fails if the loop env does not have every name of
+// the env with the same type.
 func TestLoopEnv(t *testing.T) {
 	exprs := []string{
 		"name", "id", "Secret", "Plain", "nums", "len(items)", "items[0].title", "mixed", "str", "str.String()",
 		"empty == nil", "name + Plain", "id + 1", "Greet(name)", "Count()",
-		// These are errors with an env. They must be the same errors.
+		// With an env option, these are errors. A loop body must give the same
+		// errors.
 		"Skip", "skip", "loopBase", "hidden", "nope", "name + 1", "str.Nope()", "items[0].nope", "Greet(1)",
 	}
 	run := func(text string, setup loopSetup) (string, bool) {
@@ -295,16 +296,16 @@ func TestLoopEnv(t *testing.T) {
 			t.Run(setup.name+"/"+e, func(t *testing.T) {
 				want, ok := run("{{ "+e+" }}", setup)
 				if !ok && !setup.hasEnv() {
-					// Without an env, expr finds a wrong name only when it
-					// runs, and only if the data is a struct. In a loop the
-					// data is a map, and the name is nil.
+					// Without an env option, an unknown name is an error only
+					// at run time, and only for struct data. In a loop body the
+					// env is a map, and an unknown name is nil.
 					t.Skip(want)
 				}
 				if setup.name == "struct env and pointer data" && strings.HasPrefix(e, "Greet") {
-					// expr calls a method by its index in the type of the env
-					// option. The data is a pointer and has one more method, so
-					// expr calls the wrong method outside a loop. A loop binds
-					// the method by its name.
+					// expr has a bug here. It calls a method by its index in
+					// the type of the env option. The data is a pointer and has
+					// one more method than that type, so outside a loop expr
+					// calls the wrong method. newLoopEnv finds methods by name.
 					t.Skip(want)
 				}
 				for _, text := range []string{

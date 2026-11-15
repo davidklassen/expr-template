@@ -30,9 +30,9 @@ func (e *Error) Unwrap() error {
 	return e.cause
 }
 
-// newError returns an error at the byte offset pos of text. expr computes the
-// line, the column, and the snippet, so that they have the same form as in an
-// expr error.
+// newError returns an error that points to the byte offset pos in text. It uses
+// file.Error of expr to compute the line, the column, and the snippet, so that
+// they look the same as in an expr error.
 func newError(name, text string, pos int, message string) *Error {
 	fe := &file.Error{Location: file.Location{From: utf8.RuneCountInString(text[:pos])}}
 	fe.Bind(file.NewSource(text))
@@ -45,9 +45,10 @@ func newError(name, text string, pos int, message string) *Error {
 	}
 }
 
-// exprError returns an error for the action at the byte offset at of text,
-// whose expression starts at start. It points to the position that err has in
-// the expression, or to the action if err has none.
+// exprError converts err, an error from expr, to an Error. at is the byte
+// offset in text of the "{{" of the action, and start is the byte offset of its
+// expression. The Error points to the position that err reports inside the
+// expression, or to the "{{" if err has no position.
 func exprError(name, text string, at, start int, err error) *Error {
 	fe, ok := errors.AsType[*file.Error](err)
 	if !ok {

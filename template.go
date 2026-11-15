@@ -22,8 +22,8 @@ type Template struct {
 // expression of the template when [Template.Parse] compiles it.
 //
 // Use [expr.Env] to declare the type of the data that [Template.Execute]
-// receives. Parse then reports type errors, and names that the data does not
-// have. Without expr.Env, Parse does not check the names.
+// receives. Parse then reports type errors and unknown names. Without expr.Env,
+// Parse does not check the names.
 func New(name string, opts ...expr.Option) *Template {
 	return &Template{name: name, opts: slices.Clone(opts)}
 }
@@ -35,8 +35,8 @@ func (t *Template) Name() string {
 
 // Parse parses text as the body of the template and compiles its expressions.
 //
-// If an error occurs, Parse returns nil and the error. The error is an
-// [*Error]. It has the position of the problem in text.
+// If an error occurs, Parse returns nil and the error. The error is an [*Error]
+// with the position of the problem in text.
 func (t *Template) Parse(text string) (*Template, error) {
 	nodes, err := parse(t.name, text, t.opts)
 	if err != nil {
@@ -49,13 +49,12 @@ func (t *Template) Parse(text string) (*Template, error) {
 }
 
 // Execute applies the template to data and writes the output to w. The
-// expressions see data as their env. Execute prints the value of each
-// expression as [fmt.Print] does.
+// expressions are evaluated with data as their env. Execute prints the value of
+// each expression as [fmt.Print] does.
 //
 // If an error occurs, Execute stops, but it can have written part of the output
-// to w. An error in an action is an [*Error]. It has the position of the
-// problem in the template. If a write to w fails, Execute returns the error of
-// that write as it is.
+// to w. An error in an action is an [*Error] with the position of the problem
+// in the template. If a write to w fails, Execute returns that error unchanged.
 //
 // A template may be executed safely in parallel. If parallel executions share a
 // Writer, the output may be interleaved.

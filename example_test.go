@@ -78,3 +78,33 @@ func Example_for() {
 	// tea: 2.5
 	// cake: 4
 }
+
+func Example_if() {
+	t := template.Must(template.New("cart").Parse(
+		"{{ if n == 0 }}The cart is empty.{{ else if n == 1 }}1 item{{ else }}{{ n }} items{{ end }}\n"))
+	for _, n := range []int{0, 1, 5} {
+		err := t.Execute(os.Stdout, map[string]any{"n": n})
+		if err != nil {
+			log.Fatal(err)
+		}
+	}
+	// Output:
+	// The cart is empty.
+	// 1 item
+	// 5 items
+}
+
+func Example_forMap() {
+	t := template.Must(template.New("stock").Parse(
+		"{{ for name, count in stock }}{{ name }}: {{ count }}\n{{ end }}"))
+	err := t.Execute(os.Stdout, map[string]any{
+		"stock": map[string]int{"tea": 12, "cake": 3, "milk": 7},
+	})
+	if err != nil {
+		log.Fatal(err)
+	}
+	// Output:
+	// cake: 3
+	// milk: 7
+	// tea: 12
+}

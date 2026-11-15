@@ -22,36 +22,31 @@ type textNode struct {
 	text string
 }
 
-// at is the byte offset of the "{{" in the text of the template. start is the
-// byte offset of the expression.
 type actionNode struct {
-	at    int
-	start int
+	at    int // byte offset of the "{{" in the template text
+	start int // byte offset of the expression in the template text
 	prog  *vm.Program
 }
 
 type ifNode struct {
-	at       int
-	start    int
+	at       int // byte offset of the "{{" in the template text
+	start    int // byte offset of the condition in the template text
 	prog     *vm.Program
 	body     []node
 	elseBody []node
 }
 
-// start is the byte offset of the list expression. key is the name of the
-// variable for the index or the key, or "" if the action has one variable.
-// name is the name of the variable for the element.
 type forNode struct {
-	at    int
-	start int
+	at    int // byte offset of the "{{" in the template text
+	start int // byte offset of the list expression in the template text
 	prog  *vm.Program
-	key   string
-	name  string
+	key   string // variable for the index or the map key, "" if not declared
+	name  string // variable for the element
 	body  []node
 }
 
-// reserved are the identifiers that cannot be a loop variable: the keywords of
-// the package, and the names that expr gives a fixed meaning.
+// reserved lists the identifiers that cannot be a loop variable: the keywords
+// of this package, and the names that have a fixed meaning in expr.
 var reserved = []string{"for", "end", "nil", "true", "false", "$env"}
 
 const (
@@ -59,11 +54,11 @@ const (
 	rightDelim = "}}"
 )
 
-// opts are the options for the expressions at the current position. In the body
-// of a loop, they declare the loop variables.
 type parser struct {
 	name string
 	text string
+	// opts are the options of the template. Inside a loop body, they also
+	// have one withLoopVar option for each loop variable in scope.
 	opts []expr.Option
 	pos  int
 }
@@ -167,10 +162,9 @@ func (p *parser) parseIf(a action, cond lexer.Token) (*ifNode, error) {
 func (p *parser) compile(a action, first lexer.Token) (*vm.Program, int, error) {
 	offset := byteOffset(a.body, first.From)
 	start := a.start + offset
-	// The options of the template can set the type of the result, as expr.AsInt
-	// does. That type is for the values that the template prints. A condition
-	// must be a boolean and a list must be a list with any options, so the last
-	// option here removes the type that the options before it set.
+	// A template option such as expr.AsInt sets the result type of every
+	// expression. It is meant for the values that the template prints, not for
+	// conditions and lists, so AsKind(reflect.Invalid) resets it here.
 	prog, err := expr.Compile(a.body[offset:], append(slices.Clip(p.opts), expr.AsKind(reflect.Invalid))...)
 	if err != nil {
 		return nil, 0, exprError(p.name, p.text, a.at, start, err)
@@ -208,10 +202,11 @@ func (p *parser) parseFor(a action) (*forNode, error) {
 	if err != nil {
 		return nil, err
 	}
-	// expr keeps what it knows about a value in its nature. The nature of a
-	// list has the type of its elements, also when the Go type of the list is
-	// []any, as for [1, 2]. If expr does not know the type of the list, the
-	// loop variables have no type, and Execute checks the value.
+	// The loop variables get their types from the nature of the list, which is
+	// the type information of the expr checker. It has the element type even
+	// when the Go type of the list is []any, as for the result of the map
+	// builtin. If expr does not know the type of the list, the variables are
+	// untyped, and Execute checks the value of the list.
 	var c nature.Cache
 	var index, elem nature.Nature
 	switch list := prog.Node().Nature(); {
@@ -224,9 +219,9 @@ func (p *parser) parseFor(a action) (*forNode, error) {
 		return nil, p.error(start, loopMessage(list.Type.String()))
 	}
 	opts := p.opts
-	p.opts = append(slices.Clip(opts), loopVar(name.Value, elem))
+	p.opts = append(slices.Clip(opts), withLoopVar(name.Value, elem))
 	if key != "" {
-		p.opts = append(p.opts, loopVar(key, index))
+		p.opts = append(p.opts, withLoopVar(key, index))
 	}
 	body, stop, err := p.list()
 	p.opts = opts
@@ -307,22 +302,18 @@ func conditionMessage(typ string) string {
 	return fmt.Sprintf("non-bool expression (type %s) used as condition", typ)
 }
 
-// An action is the source of one action. at is the byte offset of its "{{" in
-// the text of the template. body is the text between the delimiters without the
-// trim markers, and start is its byte offset. tokens are the tokens of body.
-// The last token is always the EOF token. before is the text between the action
-// before it and this action.
+// An action is one action as the scanner reads it from the template text.
 type action struct {
-	before string
-	at     int
-	start  int
-	body   string
-	tokens []lexer.Token
+	before string        // text between the previous action and this one
+	at     int           // byte offset of the "{{" in the template text
+	start  int           // byte offset of body in the template text
+	body   string        // text between the delimiters, without trim markers
+	tokens []lexer.Token // tokens of body; the last one is always EOF
 }
 
-// next returns the next action and moves p after it. After the last action, it
-// returns false, and the action has only the field before: the rest of the
-// text.
+// next scans the next action and moves p.pos past it. If the text has no more
+// actions, next returns false and an action that has only the field before,
+// with the rest of the text.
 func (p *parser) next() (action, bool, error) {
 	j := strings.Index(p.text[p.pos:], leftDelim)
 	if j < 0 {
@@ -335,8 +326,9 @@ func (p *parser) next() (action, bool, error) {
 	src := p.text[start:]
 	end, err := actionEnd(src)
 	if err != nil {
-		// The lexer can fail in the text after an action that has no "}}", so
-		// the position of err can be far from the cause.
+		// If an action has no "}}", the lexer reads on into the text after it
+		// and can fail there, far from the cause. So the error points to the
+		// "{{" and not to the position of err.
 		return action{}, false, p.error(at, exprMessage(err))
 	}
 	if end < 0 {
