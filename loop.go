@@ -33,13 +33,6 @@ func withLoopVar(name string, typ nature.Nature) expr.Option {
 // asks expr for them, so that struct tags, embedded structs, and methods follow
 // the rules of expr.
 func envNames(c *nature.Cache, env nature.Nature) map[string]nature.Nature {
-	if env.Kind == reflect.Map {
-		names := map[string]nature.Nature{}
-		if env.TypeData != nil {
-			maps.Copy(names, env.Fields)
-		}
-		return names
-	}
 	names := env.All(c)
 	for name, n := range names {
 		if n.Method {
@@ -58,7 +51,8 @@ func envNames(c *nature.Cache, env nature.Nature) map[string]nature.Nature {
 // this map as its env, and not with the data itself.
 func newLoopEnv(env any) map[string]any {
 	// A nested loop also takes this path, because its env is the map of the
-	// enclosing loop.
+	// enclosing loop. maps.Clone returns nil for a nil map, and the caller
+	// writes to the map, so a nil map takes the path below.
 	if m, ok := env.(map[string]any); ok && m != nil {
 		return maps.Clone(m)
 	}

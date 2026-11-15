@@ -6,10 +6,16 @@
 //	t := template.Must(template.New("hello").Parse("Hello, {{ name }}!\n"))
 //	err := t.Execute(os.Stdout, map[string]any{"name": "Alice"})
 //
-// The expressions of a template read their names from the data that Execute
-// receives. The data is a map or a struct, as the env of expr is. The options
-// of [New] are options of expr. With [expr.Env], Parse knows the type of the
-// data and type-checks the template.
+// A name in an expression is a key of the data, if the data is a map, or a
+// field or a method, if the data is a struct. A field has the name in its expr
+// struct tag, or its Go name if it has no tag. An expression can call the
+// builtin functions of expr, such as len and upper.
+//
+// The options of [New] are options of expr. [expr.Function] adds a function.
+// [expr.Env] declares the type of the data, and Parse then type-checks the
+// template and reports unknown names. Without expr.Env, a name that a map does
+// not have is nil, and a name that a struct does not have is an error from
+// Execute.
 //
 // The package does not escape the output.
 //

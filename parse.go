@@ -41,13 +41,9 @@ type forNode struct {
 	start int // byte offset of the list expression in the template text
 	prog  *vm.Program
 	key   string // variable for the index or the map key, "" if not declared
-	name  string // variable for the element
+	elem  string // variable for the element
 	body  []node
 }
-
-// reserved lists the identifiers that cannot be a loop variable: the keywords
-// of this package, and the names that have a fixed meaning in expr.
-var reserved = []string{"for", "end", "nil", "true", "false", "$env"}
 
 const (
 	leftDelim  = "{{"
@@ -65,7 +61,7 @@ type parser struct {
 
 func parse(name, text string, opts []expr.Option) ([]node, error) {
 	p := &parser{name: name, text: text, opts: opts}
-	nodes, stop, err := p.list()
+	nodes, stop, err := p.parseNodes()
 	if err != nil {
 		return nil, err
 	}
@@ -75,20 +71,20 @@ func parse(name, text string, opts []expr.Option) ([]node, error) {
 	return nodes, nil
 }
 
-// list parses nodes up to the next else action or end action, or up to the end
-// of the text. It returns the action that stopped it, or nil at the end of the
-// text.
-func (p *parser) list() ([]node, *action, error) {
+// parseNodes parses nodes up to the next else action or end action, or up to
+// the end of the text. It returns the action that stopped it, or nil at the end
+// of the text.
+func (p *parser) parseNodes() ([]node, *action, error) {
 	var nodes []node
 	for {
-		a, ok, err := p.next()
+		text, a, err := p.next()
 		if err != nil {
 			return nil, nil, err
 		}
-		if a.before != "" {
-			nodes = append(nodes, &textNode{text: a.before})
+		if text != "" {
+			nodes = append(nodes, &textNode{text: text})
 		}
-		if !ok {
+		if a == nil {
 			return nodes, nil, nil
 		}
 		switch tok := a.tokens[0]; {
@@ -107,14 +103,14 @@ func (p *parser) list() ([]node, *action, error) {
 			}
 			nodes = append(nodes, n)
 		case tok.Is(lexer.Operator, "else"):
-			return nodes, &a, nil
+			return nodes, a, nil
 		case tok.Is(lexer.Identifier, "end"):
 			if tok := a.tokens[1]; !tok.Is(lexer.EOF) {
 				return nil, nil, p.unexpected(a, tok)
 			}
-			return nodes, &a, nil
+			return nodes, a, nil
 		default:
-			prog, err := expr.Compile(a.body, p.opts...)
+			prog, err := expr.Compile(a.src, p.opts...)
 			if err != nil {
 				return nil, nil, exprError(p.name, p.text, a.at, a.start, err)
 			}
@@ -125,7 +121,7 @@ func (p *parser) list() ([]node, *action, error) {
 
 // parseIf parses the if action a and the nodes up to its end action. cond is
 // the first token of the condition.
-func (p *parser) parseIf(a action, cond lexer.Token) (*ifNode, error) {
+func (p *parser) parseIf(a *action, cond lexer.Token) (*ifNode, error) {
 	if cond.Is(lexer.EOF) {
 		return nil, p.error(a.at, "missing condition")
 	}
@@ -139,7 +135,7 @@ func (p *parser) parseIf(a action, cond lexer.Token) (*ifNode, error) {
 	if t := prog.Node().Type(); t != reflect.TypeFor[bool]() && t.Kind() != reflect.Interface {
 		return nil, p.error(start, conditionMessage(t.String()))
 	}
-	body, stop, err := p.list()
+	body, stop, err := p.parseNodes()
 	if err != nil {
 		return nil, err
 	}
@@ -148,7 +144,7 @@ func (p *parser) parseIf(a action, cond lexer.Token) (*ifNode, error) {
 	}
 	n := &ifNode{at: a.at, start: start, prog: prog, body: body}
 	if stop.tokens[0].Is(lexer.Operator, "else") {
-		n.elseBody, err = p.parseElse(*stop)
+		n.elseBody, err = p.parseElse(stop)
 		if err != nil {
 			return nil, err
 		}
@@ -159,13 +155,13 @@ func (p *parser) parseIf(a action, cond lexer.Token) (*ifNode, error) {
 // compile compiles the condition or the list of the action a. first is the
 // first token of that expression. compile returns the program and the byte
 // offset of the expression in the text of the template.
-func (p *parser) compile(a action, first lexer.Token) (*vm.Program, int, error) {
-	offset := byteOffset(a.body, first.From)
+func (p *parser) compile(a *action, first lexer.Token) (*vm.Program, int, error) {
+	offset := byteOffset(a.src, first.From)
 	start := a.start + offset
 	// A template option such as expr.AsInt sets the result type of every
 	// expression. It is meant for the values that the template prints, not for
 	// conditions and lists, so AsKind(reflect.Invalid) resets it here.
-	prog, err := expr.Compile(a.body[offset:], append(slices.Clip(p.opts), expr.AsKind(reflect.Invalid))...)
+	prog, err := expr.Compile(a.src[offset:], append(slices.Clip(p.opts), expr.AsKind(reflect.Invalid))...)
 	if err != nil {
 		return nil, 0, exprError(p.name, p.text, a.at, start, err)
 	}
@@ -173,32 +169,31 @@ func (p *parser) compile(a action, first lexer.Token) (*vm.Program, int, error) 
 }
 
 // parseFor parses the for action a and the nodes up to its end action.
-func (p *parser) parseFor(a action) (*forNode, error) {
-	var key string
-	name := a.tokens[1]
-	if err := p.checkVariable(a, name); err != nil {
+func (p *parser) parseFor(a *action) (*forNode, error) {
+	var key lexer.Token
+	elem := a.tokens[1]
+	if err := p.checkVariable(a, elem); err != nil {
 		return nil, err
 	}
-	next := 2
-	if a.tokens[next].Is(lexer.Operator, ",") {
-		key = name.Value
-		name = a.tokens[next+1]
-		if err := p.checkVariable(a, name); err != nil {
+	i := 2
+	if a.tokens[i].Is(lexer.Operator, ",") {
+		key, elem = elem, a.tokens[i+1]
+		if err := p.checkVariable(a, elem); err != nil {
 			return nil, err
 		}
-		if name.Value == key {
-			return nil, p.error(a.start+byteOffset(a.body, name.From), "cannot redeclare "+key)
+		if elem.Value == key.Value {
+			return nil, p.error(a.start+byteOffset(a.src, elem.From), "cannot redeclare "+elem.Value)
 		}
-		next += 2
+		i += 2
 	}
-	if in := a.tokens[next]; !in.Is(lexer.Operator, "in") {
+	if in := a.tokens[i]; !in.Is(lexer.Operator, "in") {
 		return nil, p.unexpected(a, in)
 	}
-	list := a.tokens[next+1]
-	if list.Is(lexer.EOF) {
+	first := a.tokens[i+1]
+	if first.Is(lexer.EOF) {
 		return nil, p.error(a.at, "missing list")
 	}
-	prog, start, err := p.compile(a, list)
+	prog, start, err := p.compile(a, first)
 	if err != nil {
 		return nil, err
 	}
@@ -208,22 +203,25 @@ func (p *parser) parseFor(a action) (*forNode, error) {
 	// builtin. If expr does not know the type of the list, the variables are
 	// untyped, and Execute checks the value of the list.
 	var c nature.Cache
-	var index, elem nature.Nature
+	var keyType, elemType nature.Nature
 	switch list := prog.Node().Nature(); {
 	case list.IsArray():
-		index, elem = c.FromType(reflect.TypeFor[int]()), list.Elem(&c)
-	case list.IsMap() && canOrder(list.Type.Key()):
-		index, elem = list.Key(&c), list.Elem(&c)
+		keyType, elemType = c.FromType(reflect.TypeFor[int]()), list.Elem(&c)
+	case list.IsMap():
+		if !canOrder(list.Type.Key()) {
+			return nil, p.error(start, sortMessage(list.Type.String()))
+		}
+		keyType, elemType = list.Key(&c), list.Elem(&c)
 	case list.Type == nil || list.Kind == reflect.Interface:
 	default:
 		return nil, p.error(start, loopMessage(list.Type.String()))
 	}
 	opts := p.opts
-	p.opts = append(slices.Clip(opts), withLoopVar(name.Value, elem))
-	if key != "" {
-		p.opts = append(p.opts, withLoopVar(key, index))
+	p.opts = append(slices.Clip(opts), withLoopVar(elem.Value, elemType))
+	if key.Value != "" {
+		p.opts = append(p.opts, withLoopVar(key.Value, keyType))
 	}
-	body, stop, err := p.list()
+	body, stop, err := p.parseNodes()
 	p.opts = opts
 	if err != nil {
 		return nil, err
@@ -234,16 +232,23 @@ func (p *parser) parseFor(a action) (*forNode, error) {
 	if stop.tokens[0].Is(lexer.Operator, "else") {
 		return nil, p.error(stop.at, "unexpected {{else}}")
 	}
-	return &forNode{at: a.at, start: start, prog: prog, key: key, name: name.Value, body: body}, nil
+	return &forNode{at: a.at, start: start, prog: prog, key: key.Value, elem: elem.Value, body: body}, nil
 }
 
 // checkVariable checks that the token tok of the for action a can be a loop
 // variable.
-func (p *parser) checkVariable(a action, tok lexer.Token) error {
+func (p *parser) checkVariable(a *action, tok lexer.Token) error {
 	if tok.Is(lexer.EOF) {
 		return p.error(a.at, "missing variable")
 	}
-	if !tok.Is(lexer.Identifier) || slices.Contains(reserved, tok.Value) {
+	if !tok.Is(lexer.Identifier) {
+		return p.unexpected(a, tok)
+	}
+	// These identifiers are keywords of this package or have a fixed meaning in
+	// expr. The lexer returns if, else, and in as operators, so the check above
+	// rejects them.
+	switch tok.Value {
+	case "for", "end", "nil", "true", "false", "$env":
 		return p.unexpected(a, tok)
 	}
 	return nil
@@ -251,10 +256,10 @@ func (p *parser) checkVariable(a action, tok lexer.Token) error {
 
 // parseElse parses the else action a and the nodes up to the end action of its
 // if action. It returns the nodes of the else part.
-func (p *parser) parseElse(a action) ([]node, error) {
+func (p *parser) parseElse(a *action) ([]node, error) {
 	switch tok := a.tokens[1]; {
 	case tok.Is(lexer.EOF):
-		nodes, stop, err := p.list()
+		nodes, stop, err := p.parseNodes()
 		if err != nil {
 			return nil, err
 		}
@@ -278,87 +283,68 @@ func (p *parser) parseElse(a action) ([]node, error) {
 	}
 }
 
-func (p *parser) unexpected(a action, tok lexer.Token) *Error {
-	return p.error(a.start+byteOffset(a.body, tok.From), fmt.Sprintf("unexpected token %v", tok))
+func (p *parser) unexpected(a *action, tok lexer.Token) *Error {
+	return p.error(a.start+byteOffset(a.src, tok.From), fmt.Sprintf("unexpected token %v", tok))
 }
 
 func (p *parser) error(pos int, message string) *Error {
 	return newError(p.name, p.text, pos, message)
 }
 
-func loopMessage(typ string) string {
-	return fmt.Sprintf("cannot loop over %s", typ)
-}
-
-// typeName returns the name of the type of v for an error message.
-func typeName(v any) string {
-	if v == nil {
-		return "nil"
-	}
-	return reflect.TypeOf(v).String()
-}
-
-func conditionMessage(typ string) string {
-	return fmt.Sprintf("non-bool expression (type %s) used as condition", typ)
-}
-
-// An action is one action as the scanner reads it from the template text.
+// An action holds the source of one action, from "{{" to "}}".
 type action struct {
-	before string        // text between the previous action and this one
 	at     int           // byte offset of the "{{" in the template text
-	start  int           // byte offset of body in the template text
-	body   string        // text between the delimiters, without trim markers
-	tokens []lexer.Token // tokens of body; the last one is always EOF
+	start  int           // byte offset of src in the template text
+	src    string        // text between the delimiters, without trim markers
+	tokens []lexer.Token // tokens of src; the last one is always EOF
 }
 
-// next scans the next action and moves p.pos past it. If the text has no more
-// actions, next returns false and an action that has only the field before,
-// with the rest of the text.
-func (p *parser) next() (action, bool, error) {
+// next returns the text up to the next action, and the action. At the end of
+// the template, it returns the rest of the text and a nil action.
+func (p *parser) next() (string, *action, error) {
 	j := strings.Index(p.text[p.pos:], leftDelim)
 	if j < 0 {
-		a := action{before: p.text[p.pos:]}
+		text := p.text[p.pos:]
 		p.pos = len(p.text)
-		return a, false, nil
+		return text, nil, nil
 	}
 	at := p.pos + j
 	start := at + len(leftDelim)
-	src := p.text[start:]
-	end, err := actionEnd(src)
+	n, err := actionEnd(p.text[start:])
 	if err != nil {
 		// If an action has no "}}", the lexer reads on into the text after it
 		// and can fail there, far from the cause. So the error points to the
 		// "{{" and not to the position of err.
-		return action{}, false, p.error(at, exprMessage(err))
+		return "", nil, p.error(at, exprMessage(err))
 	}
-	if end < 0 {
-		return action{}, false, p.error(at, "unclosed action")
+	if n < 0 {
+		return "", nil, p.error(at, "unclosed action")
 	}
 	before := p.text[p.pos:at]
-	body := src[:end]
-	next := start + end + len(rightDelim)
-	if rest, ok := strings.CutPrefix(body, "-"); ok {
+	src := p.text[start : start+n]
+	after := p.text[start+n+len(rightDelim):]
+	if rest, ok := strings.CutPrefix(src, "-"); ok {
 		if r, _ := utf8.DecodeRuneInString(rest); utils.IsSpace(r) {
 			before = strings.TrimRightFunc(before, utils.IsSpace)
-			body = rest
+			src = rest
 			start++
 		}
 	}
-	if rest, ok := strings.CutSuffix(body, "-"); ok {
+	if rest, ok := strings.CutSuffix(src, "-"); ok {
 		if r, _ := utf8.DecodeLastRuneInString(rest); utils.IsSpace(r) {
-			body = rest
-			next = len(p.text) - len(strings.TrimLeftFunc(p.text[next:], utils.IsSpace))
+			src = rest
+			after = strings.TrimLeftFunc(after, utils.IsSpace)
 		}
 	}
-	if strings.TrimFunc(body, utils.IsSpace) == "" {
-		return action{}, false, p.error(at, "empty action")
+	if strings.TrimFunc(src, utils.IsSpace) == "" {
+		return "", nil, p.error(at, "empty action")
 	}
-	tokens, err := lexer.Lex(file.NewSource(body))
+	tokens, err := lexer.Lex(file.NewSource(src))
 	if err != nil {
-		return action{}, false, p.error(at, exprMessage(err))
+		return "", nil, p.error(at, exprMessage(err))
 	}
-	p.pos = next
-	return action{before: before, at: at, start: start, body: body, tokens: tokens}, true, nil
+	p.pos = len(p.text) - len(after)
+	return before, &action{at: at, start: start, src: src, tokens: tokens}, nil
 }
 
 // actionEnd returns the byte offset in src of the "}}" that ends the action, or

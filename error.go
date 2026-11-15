@@ -3,6 +3,7 @@ package template
 import (
 	"errors"
 	"fmt"
+	"reflect"
 	"unicode/utf8"
 
 	"github.com/expr-lang/expr/file"
@@ -71,4 +72,24 @@ func exprMessage(err error) string {
 		return fe.Message
 	}
 	return err.Error()
+}
+
+func conditionMessage(typ string) string {
+	return fmt.Sprintf("non-bool expression (type %s) used as condition", typ)
+}
+
+func loopMessage(typ string) string {
+	return "cannot loop over " + typ
+}
+
+func sortMessage(typ string) string {
+	return "cannot sort keys of " + typ
+}
+
+// typeName returns the name of the type of v for an error message.
+func typeName(v any) string {
+	if v == nil {
+		return "nil"
+	}
+	return reflect.TypeOf(v).String()
 }

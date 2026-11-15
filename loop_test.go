@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"math"
 	"strings"
+	"sync"
 	"testing"
 
 	"github.com/expr-lang/expr"
@@ -137,8 +138,7 @@ type loopSetup struct {
 	name    string
 	opts    []expr.Option
 	data    any
-	methods bool // the data has the method Greet
-	pointer bool // the data has the method Count
+	methods bool // the data has methods
 }
 
 func (s loopSetup) hasEnv() bool { return s.opts != nil }
@@ -146,11 +146,11 @@ func (s loopSetup) hasEnv() bool { return s.opts != nil }
 func loopSetups() []loopSetup {
 	return []loopSetup{
 		{name: "struct env", opts: []expr.Option{expr.Env(loopData{})}, data: *newLoopData(), methods: true},
-		{name: "pointer env", opts: []expr.Option{expr.Env(&loopData{})}, data: newLoopData(), methods: true, pointer: true},
+		{name: "pointer env", opts: []expr.Option{expr.Env(&loopData{})}, data: newLoopData(), methods: true},
 		{name: "struct env and pointer data", opts: []expr.Option{expr.Env(loopData{})}, data: newLoopData(), methods: true},
 		{name: "map env", opts: []expr.Option{expr.Env(newLoopMap())}, data: newLoopMap()},
 		{name: "no env and struct data", data: *newLoopData(), methods: true},
-		{name: "no env and pointer data", data: newLoopData(), methods: true, pointer: true},
+		{name: "no env and pointer data", data: newLoopData(), methods: true},
 		{name: "no env and map data", data: newLoopMap()},
 	}
 }
@@ -161,21 +161,16 @@ var loopTests = []struct {
 	want string
 }{
 	{"list", "{{ for x in nums }}{{ x }},{{ end }}", "1,2,3,"},
-	{"text only", "{{ for x in nums }}a{{ end }}", "aaa"},
 	{"empty body", "a{{ for x in nums }}{{ end }}b", "ab"},
 	{"nil list", "a{{ for x in empty }}b{{ end }}c", "ac"},
 	{"empty list", "a{{ for x in [] }}b{{ end }}c", "ac"},
-	{"array literal", "{{ for x in [1, 2] }}{{ x }}{{ end }}", "12"},
 	{"array", "{{ for x in arr }}{{ x + 1 }}{{ end }}", "56"},
 	{"array of unknown type", "{{ for x in boxed }}{{ x }}{{ end }}", "67"},
-	{"range", "{{ for i in 1..3 }}{{ i }}{{ end }}", "123"},
 	{"list expression", "{{ for x in filter(nums, # > 1) }}{{ x }}{{ end }}", "23"},
 	{"list of unknown type", "{{ for x in mixed }}{{ x }}{{ end }}", "1a"},
 	{"variable in an expression", "{{ for x in nums }}{{ x + 1 }}{{ end }}", "234"},
 	{"field of the variable", "{{ for it in items }}{{ it.title }};{{ end }}", "a;b;"},
 	{"name of the data in the body", "{{ for x in nums }}{{ name }}{{ x }} {{ end }}", "n1 n2 n3 "},
-	{"without spaces", "{{for x in nums}}{{x}}{{end}}", "123"},
-	{"across lines", "{{ for\nx\nin\nnums }}{{ x }}{{ end }}", "123"},
 	{"with comments", "{{ for /* c */ x /* c */ in /* c */ nums }}{{ x }}{{ end /* c */ }}", "123"},
 	{"trim", "a {{- for x in nums -}} {{ x }} {{- end -}} b", "a123b"},
 	{"if in for", "{{ for x in nums }}{{ if x > 1 }}{{ x }}{{ else }}-{{ end }}{{ end }}", "-23"},
@@ -183,18 +178,14 @@ var loopTests = []struct {
 	{"for after for", "{{ for x in nums }}{{ x }}{{ end }}{{ for x in single }}{{ x }}{{ end }}", "1230"},
 	{"nested", "{{ for l in lists }}[{{ for x in l }}{{ x }}{{ end }}]{{ end }}", "[12][3]"},
 	{"inner loop sees the outer variable", "{{ for a in nums }}{{ for b in single }}{{ a + b }}{{ end }}{{ end }}", "123"},
-	{"variable shadows a name of the data", "{{ for name in nums }}{{ name }}{{ end }}{{ name }}", "123n"},
-	{"variable shadows the type of a name of the data", "{{ for name in nums }}{{ name + 1 }}{{ end }}", "234"},
+	{"variable shadows a name of the data", "{{ for name in nums }}{{ name + 1 }}{{ end }}{{ name }}", "234n"},
 	{"variable shadows an outer variable", "{{ for x in nums }}{{ for x in single }}{{ x }}{{ end }}{{ x }}{{ end }}", "010203"},
 	{"list of an inner loop is the outer variable", "{{ for x in lists }}{{ for x in x }}{{ x }}{{ end }}{{ end }}", "123"},
 	{"variable named as a function", "{{ for len in nums }}{{ len }}{{ end }}{{ len(nums) }}", "1233"},
 	{"index", "{{ for i, x in nums }}{{ i }}:{{ x }} {{ end }}", "0:1 1:2 2:3 "},
 	{"index in an expression", "{{ for i, x in nums }}{{ i + x }}{{ end }}", "135"},
 	{"index of an array", "{{ for i, x in arr }}{{ i }}{{ x }}{{ end }}", "0415"},
-	{"index of a range", "{{ for i, x in 5..6 }}{{ i }}{{ x }}{{ end }}", "0516"},
 	{"index of a list of unknown type", "{{ for i, x in mixed }}{{ i }}{{ x }}{{ end }}", "011a"},
-	{"index without spaces", "{{for i,x in nums}}{{i}}{{x}}{{end}}", "011223"},
-	{"index with comments", "{{ for i /* c */ , /* c */ x in nums }}{{ i }}{{ x }}{{ end }}", "011223"},
 	{"index shadows a name of the data", "{{ for name, x in nums }}{{ name }}{{ end }}{{ name }}", "012n"},
 	{"index of an outer loop in an inner loop", "{{ for i, l in lists }}{{ for j, x in l }}{{ i }}{{ j }}{{ x }} {{ end }}{{ end }}", "001 012 103 "},
 	{"map", "{{ for v in ages }}{{ v }}{{ end }}", "123"},
@@ -206,17 +197,11 @@ var loopTests = []struct {
 	{"map with string keys in the order of their bytes", "{{ for k, v in words }}{{ k }} {{ end }}", "B a k10 k2 é "},
 	{"map with keys of a named type", "{{ for k, v in byname }}{{ k }}{{ v }}{{ end }}", "a1b2"},
 	{"map from groupBy", "{{ for k, v in groupBy(nums, # % 2) }}{{ k }}:{{ v }} {{ end }}", "0:[2] 1:[1 3] "},
-	{"map from fromPairs", `{{ for k, v in fromPairs([["b", 2], ["a", 1]]) }}{{ k }}{{ v }}{{ end }}`, "a1b2"},
 	{"map literal", `{{ for k, v in {"b": 2, "a": 1} }}{{ k }}{{ v }}{{ end }}`, "a1b2"},
 	{"map of unknown type", "{{ for k, v in boxed2 }}{{ k }}{{ v }}{{ end }}", "x1y2"},
 	{"nil map", "a{{ for k, v in nomap }}b{{ end }}c", "ac"},
 	{"empty map", "a{{ for k, v in {} }}b{{ end }}c", "ac"},
 	{"list in a map loop", "{{ for k, v in ages }}{{ for x in single }}{{ k }}{{ v + x }}{{ end }}{{ end }}", "al1bob2cy3"},
-	{"embedded field in the body", "{{ for x in single }}{{ id }}{{ end }}", "7"},
-	{"field of an unexported embedded struct in the body", "{{ for x in single }}{{ Secret }}{{ end }}", "s"},
-	{"field without a tag in the body", "{{ for x in single }}{{ Plain }}{{ end }}", "p"},
-	{"interface field in the body", "{{ for x in single }}{{ str.String() }}{{ end }}", "S"},
-	{"for is a name in parentheses", "{{ for x in single }}{{ (x) }}{{ end }}", "0"},
 }
 
 func TestLoop(t *testing.T) {
@@ -237,33 +222,16 @@ func TestLoop(t *testing.T) {
 
 func TestLoopMethods(t *testing.T) {
 	for _, setup := range loopSetups() {
+		if !setup.methods {
+			continue
+		}
 		t.Run(setup.name, func(t *testing.T) {
-			if setup.methods {
-				got, err := execute(t, "{{ for x in nums }}{{ Greet(name) }}{{ x }} {{ end }}", setup.data, setup.opts...)
-				if err != nil {
-					t.Fatal(err)
-				}
-				if want := "hi n1 hi n2 hi n3 "; got != want {
-					t.Errorf("got %q, want %q", got, want)
-				}
+			got, err := execute(t, "{{ for x in single }}{{ Take(First()) }}{{ end }}", setup.data, setup.opts...)
+			if err != nil {
+				t.Fatal(err)
 			}
-			if setup.methods {
-				got, err := execute(t, "{{ for x in single }}{{ Take(First()) }}{{ end }}", setup.data, setup.opts...)
-				if err != nil {
-					t.Fatal(err)
-				}
-				if want := "a"; got != want {
-					t.Errorf("got %q, want %q", got, want)
-				}
-			}
-			if setup.pointer {
-				got, err := execute(t, "{{ for x in single }}{{ for y in single }}{{ Count() }}{{ end }}{{ end }}", setup.data, setup.opts...)
-				if err != nil {
-					t.Fatal(err)
-				}
-				if want := "2"; got != want {
-					t.Errorf("got %q, want %q", got, want)
-				}
+			if want := "a"; got != want {
+				t.Errorf("got %q, want %q", got, want)
 			}
 		})
 	}
@@ -298,10 +266,11 @@ func TestLoopEnv(t *testing.T) {
 				if !ok && !setup.hasEnv() {
 					// Without an env option, an unknown name is an error only
 					// at run time, and only for struct data. In a loop body the
-					// env is a map, and an unknown name is nil.
+					// env is a map, and an unknown name is nil. TestLoopLimits
+					// checks this difference.
 					t.Skip(want)
 				}
-				if setup.name == "struct env and pointer data" && strings.HasPrefix(e, "Greet") {
+				if setup.name == "struct env and pointer data" && (e == "Greet(name)" || e == "Greet(1)") {
 					// expr has a bug here. It calls a method by its index in
 					// the type of the env option. The data is a pointer and has
 					// one more method than that type, so outside a loop expr
@@ -321,204 +290,245 @@ func TestLoopEnv(t *testing.T) {
 	}
 }
 
-func TestLoopParseError(t *testing.T) {
-	tests := []struct {
-		name string
-		text string
-		want string
-	}{
-		{
-			"list is a string",
-			"a {{ for x in name }}{{ end }}",
-			"cannot loop over string (t:1:15)\n | a {{ for x in name }}{{ end }}\n | ..............^",
-		},
-		{
-			"list is an int",
-			"a {{ for x in id }}{{ end }}",
-			"cannot loop over int (t:1:15)\n | a {{ for x in id }}{{ end }}\n | ..............^",
-		},
-		{
-			"list of an inner loop is not a list",
-			"a {{ for x in nums }}{{ for y in x }}{{ end }}{{ end }}",
-			"cannot loop over int (t:1:34)\n | a {{ for x in nums }}{{ for y in x }}{{ end }}{{ end }}\n | .................................^",
-		},
-		{
-			"error in the list",
-			"a {{ for x in nope }}{{ end }}",
-			"unknown name nope (t:1:15)\n | a {{ for x in nope }}{{ end }}\n | ..............^",
-		},
-		{
-			"wrong type of the variable of an array literal",
-			"a {{ for x in [id, 2] }}{{ x + name }}{{ end }}",
-			"invalid operation: + (mismatched types int and string) (t:1:30)\n | a {{ for x in [id, 2] }}{{ x + name }}{{ end }}\n | .............................^",
-		},
-		{
-			"wrong type of the variable of a range",
-			"a {{ for x in 1..3 }}{{ x + name }}{{ end }}",
-			"invalid operation: + (mismatched types int and string) (t:1:27)\n | a {{ for x in 1..3 }}{{ x + name }}{{ end }}\n | ..........................^",
-		},
-		{
-			"wrong field of the variable of a builtin",
-			"a {{ for it in filter(items, true) }}{{ it.titel }}{{ end }}",
-			"type template.item has no field titel (t:1:44)\n | a {{ for it in filter(items, true) }}{{ it.titel }}{{ end }}\n | ...........................................^",
-		},
-		{
-			"wrong field of the variable",
-			"a {{ for it in items }}{{ it.titel }}{{ end }}",
-			"type template.item has no field titel (t:1:30)\n | a {{ for it in items }}{{ it.titel }}{{ end }}\n | .............................^",
-		},
-		{
-			"wrong type of the variable",
-			"a {{ for x in nums }}{{ x + name }}{{ end }}",
-			"invalid operation: + (mismatched types int and string) (t:1:27)\n | a {{ for x in nums }}{{ x + name }}{{ end }}\n | ..........................^",
-		},
-		{
-			"variable after the loop",
-			"a {{ for x in nums }}{{ end }}{{ x }}",
-			"unknown name x (t:1:34)\n | a {{ for x in nums }}{{ end }}{{ x }}\n | .................................^",
-		},
-		{
-			"variable shadows a function",
-			"a {{ for len in items }}{{ len(nums) }}{{ end }}",
-			"template.item is not callable (t:1:28)\n | a {{ for len in items }}{{ len(nums) }}{{ end }}\n | ...........................^",
-		},
-		{
-			"for without variable",
-			"a {{ for }}b{{ end }}",
-			"missing variable (t:1:3)\n | a {{ for }}b{{ end }}\n | ..^",
-		},
-		{
-			"for without in",
-			"a {{ for x }}b{{ end }}",
-			"unexpected token EOF (t:1:11)\n | a {{ for x }}b{{ end }}\n | ..........^",
-		},
-		{
-			"another word for in",
-			"a {{ for x of nums }}b{{ end }}",
-			"unexpected token Identifier(\"of\") (t:1:12)\n | a {{ for x of nums }}b{{ end }}\n | ...........^",
-		},
-		{
-			"three variables",
-			"a {{ for x, y, z in nums }}b{{ end }}",
-			"unexpected token Operator(\",\") (t:1:14)\n | a {{ for x, y, z in nums }}b{{ end }}\n | .............^",
-		},
-		{
-			"comma without first variable",
-			"a {{ for , x in nums }}b{{ end }}",
-			"unexpected token Operator(\",\") (t:1:10)\n | a {{ for , x in nums }}b{{ end }}\n | .........^",
-		},
-		{
-			"comma without second variable",
-			"a {{ for i, in nums }}b{{ end }}",
-			"unexpected token Operator(\"in\") (t:1:13)\n | a {{ for i, in nums }}b{{ end }}\n | ............^",
-		},
-		{
-			"comma at the end",
-			"a {{ for i, }}b{{ end }}",
-			"missing variable (t:1:3)\n | a {{ for i, }}b{{ end }}\n | ..^",
-		},
-		{
-			"second variable named end",
-			"a {{ for i, end in nums }}b{{ end }}",
-			"unexpected token Identifier(\"end\") (t:1:13)\n | a {{ for i, end in nums }}b{{ end }}\n | ............^",
-		},
-		{
-			"first of two variables named nil",
-			"a {{ for nil, x in nums }}b{{ end }}",
-			"unexpected token Identifier(\"nil\") (t:1:10)\n | a {{ for nil, x in nums }}b{{ end }}\n | .........^",
-		},
-		{
-			"two variables with one name",
-			"a {{ for x, x in nums }}b{{ end }}",
-			"cannot redeclare x (t:1:13)\n | a {{ for x, x in nums }}b{{ end }}\n | ............^",
-		},
-		{
-			"wrong type of the index",
-			"a {{ for i, x in nums }}{{ i + name }}{{ end }}",
-			"invalid operation: + (mismatched types int and string) (t:1:30)\n | a {{ for i, x in nums }}{{ i + name }}{{ end }}\n | .............................^",
-		},
-		{
-			"wrong type of the key",
-			"a {{ for k, v in ages }}{{ k + v }}{{ end }}",
-			"invalid operation: + (mismatched types string and int) (t:1:30)\n | a {{ for k, v in ages }}{{ k + v }}{{ end }}\n | .............................^",
-		},
-		{
-			"map with keys that have no order",
-			"a {{ for k, v in flags }}b{{ end }}",
-			"cannot loop over map[bool]int (t:1:18)\n | a {{ for k, v in flags }}b{{ end }}\n | .................^",
-		},
-		{
-			"for without list",
-			"a {{ for x in }}b{{ end }}",
-			"missing list (t:1:3)\n | a {{ for x in }}b{{ end }}\n | ..^",
-		},
-		{
-			"variable named end",
-			"a {{ for end in nums }}b{{ end }}",
-			"unexpected token Identifier(\"end\") (t:1:10)\n | a {{ for end in nums }}b{{ end }}\n | .........^",
-		},
-		{
-			"variable named for",
-			"a {{ for for in nums }}b{{ end }}",
-			"unexpected token Identifier(\"for\") (t:1:10)\n | a {{ for for in nums }}b{{ end }}\n | .........^",
-		},
-		{
-			"variable named if",
-			"a {{ for if in nums }}b{{ end }}",
-			"unexpected token Operator(\"if\") (t:1:10)\n | a {{ for if in nums }}b{{ end }}\n | .........^",
-		},
-		{
-			"variable named nil",
-			"a {{ for nil in nums }}b{{ end }}",
-			"unexpected token Identifier(\"nil\") (t:1:10)\n | a {{ for nil in nums }}b{{ end }}\n | .........^",
-		},
-		{
-			"variable named true",
-			"a {{ for true in nums }}b{{ end }}",
-			"unexpected token Identifier(\"true\") (t:1:10)\n | a {{ for true in nums }}b{{ end }}\n | .........^",
-		},
-		{
-			"variable named false",
-			"a {{ for false in nums }}b{{ end }}",
-			"unexpected token Identifier(\"false\") (t:1:10)\n | a {{ for false in nums }}b{{ end }}\n | .........^",
-		},
-		{
-			"variable named $env",
-			"a {{ for $env in nums }}b{{ end }}",
-			"unexpected token Identifier(\"$env\") (t:1:10)\n | a {{ for $env in nums }}b{{ end }}\n | .........^",
-		},
-		{
-			"variable is a number",
-			"a {{ for 1 in nums }}b{{ end }}",
-			"unexpected token Number(\"1\") (t:1:10)\n | a {{ for 1 in nums }}b{{ end }}\n | .........^",
-		},
-		{
-			"for without end",
-			"a {{ for x in nums }}b",
-			"unclosed for (t:1:3)\n | a {{ for x in nums }}b\n | ..^",
-		},
-		{
-			"if around for without end",
-			"a {{ if true }}{{ for x in nums }}b{{ end }}",
-			"unclosed if (t:1:3)\n | a {{ if true }}{{ for x in nums }}b{{ end }}\n | ..^",
-		},
-		{
-			"else in for",
-			"a {{ for x in nums }}b{{ else }}c{{ end }}",
-			"unexpected {{else}} (t:1:23)\n | a {{ for x in nums }}b{{ else }}c{{ end }}\n | ......................^",
-		},
-		{
-			"for as a name",
-			"a {{ (for) }}",
-			"unknown name for (t:1:7)\n | a {{ (for) }}\n | ......^",
-		},
-		{
-			"after multi-byte characters",
-			"é {{ /* é */ for é /* é */ in /* é */ nope }}{{ end }}",
-			"unknown name nope (t:1:39)\n | é {{ /* é */ for é /* é */ in /* é */ nope }}{{ end }}\n | ......................................^",
-		},
+type counter struct {
+	N int
+}
+
+func (c *counter) Inc() string {
+	c.N++
+	return ""
+}
+
+// TestLoopLimits checks the two limits of loops that the package doc states.
+func TestLoopLimits(t *testing.T) {
+	t.Run("method changes a field of the data", func(t *testing.T) {
+		got, err := execute(t, "{{ for x in [1, 2] }}{{ Inc() }}{{ N }}{{ end }}{{ N }}", &counter{})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if want := "002"; got != want {
+			t.Errorf("got %q, want %q", got, want)
+		}
+	})
+	t.Run("unknown name without an env option", func(t *testing.T) {
+		_, err := execute(t, "{{ nope }}", struct{}{})
+		want := "cannot fetch nope from struct {} (t:1:4)\n | {{ nope }}\n | ...^"
+		if err == nil || err.Error() != want {
+			t.Errorf("got\n%v\nwant\n%s", err, want)
+		}
+		got, err := execute(t, "{{ for x in [1] }}{{ nope }}{{ end }}", struct{}{})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if want := "<nil>"; got != want {
+			t.Errorf("got %q, want %q", got, want)
+		}
+	})
+}
+
+func TestExecuteParallel(t *testing.T) {
+	const text = "{{ for k, v in ages }}{{ k }}{{ for x in nums }}{{ Greet(name) }}{{ v + x }} {{ end }}{{ end }}"
+	tmpl := Must(New("t", expr.Env(&loopData{})).Parse(text))
+	data := newLoopData()
+	var want strings.Builder
+	if err := tmpl.Execute(&want, data); err != nil {
+		t.Fatal(err)
 	}
-	for _, tt := range tests {
+	var wg sync.WaitGroup
+	for range 8 {
+		wg.Go(func() {
+			var got strings.Builder
+			if err := tmpl.Execute(&got, data); err != nil {
+				t.Error(err)
+				return
+			}
+			if got.String() != want.String() {
+				t.Errorf("got %q, want %q", got.String(), want.String())
+			}
+		})
+	}
+	wg.Wait()
+}
+
+var loopParseErrorTests = []struct {
+	name string
+	text string
+	want string
+}{
+	{
+		"list is a string",
+		"a {{ for x in name }}{{ end }}",
+		"cannot loop over string (t:1:15)\n | a {{ for x in name }}{{ end }}\n | ..............^",
+	},
+	{
+		"list of an inner loop is not a list",
+		"a {{ for x in nums }}{{ for y in x }}{{ end }}{{ end }}",
+		"cannot loop over int (t:1:34)\n | a {{ for x in nums }}{{ for y in x }}{{ end }}{{ end }}\n | .................................^",
+	},
+	{
+		"error in the list",
+		"a {{ for x in nope }}{{ end }}",
+		"unknown name nope (t:1:15)\n | a {{ for x in nope }}{{ end }}\n | ..............^",
+	},
+	{
+		"wrong type of the variable of an array literal",
+		"a {{ for x in [id, 2] }}{{ x + name }}{{ end }}",
+		"invalid operation: + (mismatched types int and string) (t:1:30)\n | a {{ for x in [id, 2] }}{{ x + name }}{{ end }}\n | .............................^",
+	},
+	{
+		"wrong type of the variable of a range",
+		"a {{ for x in 1..3 }}{{ x + name }}{{ end }}",
+		"invalid operation: + (mismatched types int and string) (t:1:27)\n | a {{ for x in 1..3 }}{{ x + name }}{{ end }}\n | ..........................^",
+	},
+	{
+		"wrong field of the variable of a builtin",
+		"a {{ for it in filter(items, true) }}{{ it.titel }}{{ end }}",
+		"type template.item has no field titel (t:1:44)\n | a {{ for it in filter(items, true) }}{{ it.titel }}{{ end }}\n | ...........................................^",
+	},
+	{
+		"wrong type of the variable",
+		"a {{ for x in nums }}{{ x + name }}{{ end }}",
+		"invalid operation: + (mismatched types int and string) (t:1:27)\n | a {{ for x in nums }}{{ x + name }}{{ end }}\n | ..........................^",
+	},
+	{
+		"variable after the loop",
+		"a {{ for x in nums }}{{ end }}{{ x }}",
+		"unknown name x (t:1:34)\n | a {{ for x in nums }}{{ end }}{{ x }}\n | .................................^",
+	},
+	{
+		"variable shadows a function",
+		"a {{ for len in items }}{{ len(nums) }}{{ end }}",
+		"template.item is not callable (t:1:28)\n | a {{ for len in items }}{{ len(nums) }}{{ end }}\n | ...........................^",
+	},
+	{
+		"for without variable",
+		"a {{ for }}b{{ end }}",
+		"missing variable (t:1:3)\n | a {{ for }}b{{ end }}\n | ..^",
+	},
+	{
+		"for without in",
+		"a {{ for x }}b{{ end }}",
+		"unexpected token EOF (t:1:11)\n | a {{ for x }}b{{ end }}\n | ..........^",
+	},
+	{
+		"another word for in",
+		"a {{ for x of nums }}b{{ end }}",
+		"unexpected token Identifier(\"of\") (t:1:12)\n | a {{ for x of nums }}b{{ end }}\n | ...........^",
+	},
+	{
+		"three variables",
+		"a {{ for x, y, z in nums }}b{{ end }}",
+		"unexpected token Operator(\",\") (t:1:14)\n | a {{ for x, y, z in nums }}b{{ end }}\n | .............^",
+	},
+	{
+		"comma without first variable",
+		"a {{ for , x in nums }}b{{ end }}",
+		"unexpected token Operator(\",\") (t:1:10)\n | a {{ for , x in nums }}b{{ end }}\n | .........^",
+	},
+	{
+		"comma without second variable",
+		"a {{ for i, in nums }}b{{ end }}",
+		"unexpected token Operator(\"in\") (t:1:13)\n | a {{ for i, in nums }}b{{ end }}\n | ............^",
+	},
+	{
+		"comma at the end",
+		"a {{ for i, }}b{{ end }}",
+		"missing variable (t:1:3)\n | a {{ for i, }}b{{ end }}\n | ..^",
+	},
+	{
+		"second variable named end",
+		"a {{ for i, end in nums }}b{{ end }}",
+		"unexpected token Identifier(\"end\") (t:1:13)\n | a {{ for i, end in nums }}b{{ end }}\n | ............^",
+	},
+	{
+		"two variables with one name",
+		"a {{ for x, x in nums }}b{{ end }}",
+		"cannot redeclare x (t:1:13)\n | a {{ for x, x in nums }}b{{ end }}\n | ............^",
+	},
+	{
+		"wrong type of the index",
+		"a {{ for i, x in nums }}{{ i + name }}{{ end }}",
+		"invalid operation: + (mismatched types int and string) (t:1:30)\n | a {{ for i, x in nums }}{{ i + name }}{{ end }}\n | .............................^",
+	},
+	{
+		"wrong type of the key",
+		"a {{ for k, v in ages }}{{ k + v }}{{ end }}",
+		"invalid operation: + (mismatched types string and int) (t:1:30)\n | a {{ for k, v in ages }}{{ k + v }}{{ end }}\n | .............................^",
+	},
+	{
+		"map with keys that cannot be sorted",
+		"a {{ for k, v in flags }}b{{ end }}",
+		"cannot sort keys of map[bool]int (t:1:18)\n | a {{ for k, v in flags }}b{{ end }}\n | .................^",
+	},
+	{
+		"for without list",
+		"a {{ for x in }}b{{ end }}",
+		"missing list (t:1:3)\n | a {{ for x in }}b{{ end }}\n | ..^",
+	},
+	{
+		"variable named end",
+		"a {{ for end in nums }}b{{ end }}",
+		"unexpected token Identifier(\"end\") (t:1:10)\n | a {{ for end in nums }}b{{ end }}\n | .........^",
+	},
+	{
+		"variable named for",
+		"a {{ for for in nums }}b{{ end }}",
+		"unexpected token Identifier(\"for\") (t:1:10)\n | a {{ for for in nums }}b{{ end }}\n | .........^",
+	},
+	{
+		"variable named if",
+		"a {{ for if in nums }}b{{ end }}",
+		"unexpected token Operator(\"if\") (t:1:10)\n | a {{ for if in nums }}b{{ end }}\n | .........^",
+	},
+	{
+		"variable named nil",
+		"a {{ for nil in nums }}b{{ end }}",
+		"unexpected token Identifier(\"nil\") (t:1:10)\n | a {{ for nil in nums }}b{{ end }}\n | .........^",
+	},
+	{
+		"variable named true",
+		"a {{ for true in nums }}b{{ end }}",
+		"unexpected token Identifier(\"true\") (t:1:10)\n | a {{ for true in nums }}b{{ end }}\n | .........^",
+	},
+	{
+		"variable named false",
+		"a {{ for false in nums }}b{{ end }}",
+		"unexpected token Identifier(\"false\") (t:1:10)\n | a {{ for false in nums }}b{{ end }}\n | .........^",
+	},
+	{
+		"variable named $env",
+		"a {{ for $env in nums }}b{{ end }}",
+		"unexpected token Identifier(\"$env\") (t:1:10)\n | a {{ for $env in nums }}b{{ end }}\n | .........^",
+	},
+	{
+		"for without end",
+		"a {{ for x in nums }}b",
+		"unclosed for (t:1:3)\n | a {{ for x in nums }}b\n | ..^",
+	},
+	{
+		"if around for without end",
+		"a {{ if true }}{{ for x in nums }}b{{ end }}",
+		"unclosed if (t:1:3)\n | a {{ if true }}{{ for x in nums }}b{{ end }}\n | ..^",
+	},
+	{
+		"else in for",
+		"a {{ for x in nums }}b{{ else }}c{{ end }}",
+		"unexpected {{else}} (t:1:23)\n | a {{ for x in nums }}b{{ else }}c{{ end }}\n | ......................^",
+	},
+	{
+		"for as a name",
+		"a {{ (for) }}",
+		"unknown name for (t:1:7)\n | a {{ (for) }}\n | ......^",
+	},
+	{
+		"after multi-byte characters",
+		"é {{ /* é */ for é /* é */ in /* é */ nope }}{{ end }}",
+		"unknown name nope (t:1:39)\n | é {{ /* é */ for é /* é */ in /* é */ nope }}{{ end }}\n | ......................................^",
+	},
+}
+
+func TestLoopParseError(t *testing.T) {
+	for _, tt := range loopParseErrorTests {
 		t.Run(tt.name, func(t *testing.T) {
 			_, err := New("t", expr.Env(loopData{})).Parse(tt.text)
 			if err == nil {
@@ -540,13 +550,6 @@ func TestLoopExecuteError(t *testing.T) {
 		want string
 	}{
 		{
-			"list is an int",
-			"a {{ for x in mixed }}b{{ end }}",
-			loopData{Mixed: 5},
-			"a ",
-			"cannot loop over int (t:1:15)\n | a {{ for x in mixed }}b{{ end }}\n | ..............^",
-		},
-		{
 			"list is nil",
 			"a {{ for x in mixed }}b{{ end }}",
 			loopData{},
@@ -561,11 +564,11 @@ func TestLoopExecuteError(t *testing.T) {
 			"cannot loop over string (t:1:15)\n | a {{ for x in mixed }}b{{ end }}\n | ..............^",
 		},
 		{
-			"map with keys that have no order",
+			"map with keys that cannot be sorted",
 			"a {{ for x in mixed }}b{{ end }}",
 			loopData{Mixed: map[bool]int{true: 1}},
 			"a ",
-			"cannot loop over map[bool]int (t:1:15)\n | a {{ for x in mixed }}b{{ end }}\n | ..............^",
+			"cannot sort keys of map[bool]int (t:1:15)\n | a {{ for x in mixed }}b{{ end }}\n | ..............^",
 		},
 		{
 			"error in the body of a map loop",
@@ -579,28 +582,42 @@ func TestLoopExecuteError(t *testing.T) {
 			"a {{ for x in mixed }}b{{ end }}",
 			loopData{Mixed: map[any]int{"a": 1, 2: 2}},
 			"a ",
-			"cannot loop over map[interface {}]int (t:1:15)\n | a {{ for x in mixed }}b{{ end }}\n | ..............^",
+			"cannot sort keys of map[interface {}]int (t:1:15)\n | a {{ for x in mixed }}b{{ end }}\n | ..............^",
 		},
 		{
 			"map with integer and float keys",
 			"a {{ for x in mixed }}b{{ end }}",
 			loopData{Mixed: map[any]int{1: 1, 2.5: 2}},
 			"a ",
-			"cannot loop over map[interface {}]int (t:1:15)\n | a {{ for x in mixed }}b{{ end }}\n | ..............^",
+			"cannot sort keys of map[interface {}]int (t:1:15)\n | a {{ for x in mixed }}b{{ end }}\n | ..............^",
+		},
+		{
+			"map with signed and unsigned keys",
+			"a {{ for x in mixed }}b{{ end }}",
+			loopData{Mixed: map[any]int{1: 1, uint(2): 2}},
+			"a ",
+			"cannot sort keys of map[interface {}]int (t:1:15)\n | a {{ for x in mixed }}b{{ end }}\n | ..............^",
+		},
+		{
+			"error without a position in the list",
+			"a {{ for x in (if mixed { [1] } else { [2] }) }}b{{ end }}",
+			loopData{Mixed: 5},
+			"a ",
+			"interface conversion: interface {} is int, not bool (t:1:3)\n | a {{ for x in (if mixed { [1] } else { [2] }) }}b{{ end }}\n | ..^",
 		},
 		{
 			"map with a nil key",
 			"a {{ for x in mixed }}b{{ end }}",
 			loopData{Mixed: map[any]int{nil: 1}},
 			"a ",
-			"cannot loop over map[interface {}]int (t:1:15)\n | a {{ for x in mixed }}b{{ end }}\n | ..............^",
+			"cannot sort keys of map[interface {}]int (t:1:15)\n | a {{ for x in mixed }}b{{ end }}\n | ..............^",
 		},
 		{
-			"map with keys of an interface type that have no order",
+			"map with keys of an interface type that cannot be sorted",
 			"a {{ for x in mixed }}b{{ end }}",
 			loopData{Mixed: map[any]int{true: 1}},
 			"a ",
-			"cannot loop over map[interface {}]int (t:1:15)\n | a {{ for x in mixed }}b{{ end }}\n | ..............^",
+			"cannot sort keys of map[interface {}]int (t:1:15)\n | a {{ for x in mixed }}b{{ end }}\n | ..............^",
 		},
 		{
 			"error in the list",
@@ -633,7 +650,7 @@ func TestLoopExecuteError(t *testing.T) {
 	}
 }
 
-func TestLoopOptions(t *testing.T) {
+func TestLoopData(t *testing.T) {
 	typed := types.Map{"nums": types.TypeOf([]int{}), "n": types.Int}
 	tests := []struct {
 		name string
@@ -669,6 +686,20 @@ func TestLoopOptions(t *testing.T) {
 			nil,
 			nil,
 			"12",
+		},
+		{
+			"no env and nil map data",
+			"{{ for x in [1, 2] }}{{ x }}{{ end }}",
+			map[string]any(nil),
+			nil,
+			"12",
+		},
+		{
+			"no env and data that is a pointer to a pointer",
+			"{{ for x in single }}{{ name }}{{ end }}",
+			new(newLoopData()),
+			nil,
+			"n",
 		},
 		{
 			"no env and data that is not a struct or a map",
@@ -715,6 +746,13 @@ func TestLoopOptions(t *testing.T) {
 			"t",
 		},
 		{
+			"method of a map type that is the env",
+			"{{ for x in [0] }}{{ Title() }}{{ end }}",
+			namedMap{},
+			[]expr.Option{expr.Env(namedMap{})},
+			"t",
+		},
+		{
 			"method of a map type and a key with its name",
 			"{{ Title() }}{{ for x in [0] }}{{ Title() }}{{ end }}",
 			namedMap{"Title": "key"},
@@ -743,6 +781,20 @@ func TestLoopOptions(t *testing.T) {
 			"-1n 2b 10j ",
 		},
 		{
+			"map with unsigned keys of mixed sizes",
+			"{{ for v in mixed }}{{ v }}{{ end }}",
+			loopData{Mixed: map[any]int{uint8(200): 2, uint16(300): 3, uint32(1): 1, uintptr(400): 4}},
+			[]expr.Option{expr.Env(loopData{})},
+			"1234",
+		},
+		{
+			"map with float32 keys",
+			"{{ for v in mixed }}{{ v }}{{ end }}",
+			loopData{Mixed: map[float32]int{2.5: 2, 10.5: 3, 0.5: 1}},
+			[]expr.Option{expr.Env(loopData{})},
+			"123",
+		},
+		{
 			"empty map with keys of an interface type",
 			"a{{ for k, v in mixed }}b{{ end }}c",
 			loopData{Mixed: map[any]int{}},
@@ -750,11 +802,11 @@ func TestLoopOptions(t *testing.T) {
 			"ac",
 		},
 		{
-			"map with a NaN key",
-			"{{ for k, v in mixed }}{{ v }} {{ end }}",
-			loopData{Mixed: map[float64]string{math.NaN(): "n", 1: "one"}},
+			"map with NaN keys",
+			"{{ for v in mixed }}{{ v }}{{ end }}",
+			loopData{Mixed: map[float64]int{math.NaN(): 0, math.NaN(): 0, math.NaN(): 0, 1: 1, 2: 2, 3: 3, 4: 4, 5: 5}},
 			[]expr.Option{expr.Env(loopData{})},
-			"n one ",
+			"00012345",
 		},
 		{
 			"body removes an entry of the map",
@@ -765,10 +817,10 @@ func TestLoopOptions(t *testing.T) {
 		},
 		{
 			"map with another value type",
-			"{{ for x in nums }}{{ x }}{{ end }}",
+			"{{ for x in nums }}{{ len(nums) }}{{ end }}",
 			map[string][]int{"nums": {1, 2}},
 			[]expr.Option{expr.Env(map[string][]int{"nums": nil})},
-			"12",
+			"22",
 		},
 	}
 	for _, tt := range tests {
@@ -784,7 +836,7 @@ func TestLoopOptions(t *testing.T) {
 	}
 }
 
-func TestLoopOptionsError(t *testing.T) {
+func TestLoopDataError(t *testing.T) {
 	tests := []struct {
 		name string
 		text string

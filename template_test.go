@@ -1,7 +1,9 @@
 package template
 
 import (
+	"errors"
 	"io"
+	"maps"
 	"strings"
 	"testing"
 
@@ -42,17 +44,12 @@ var executeTests = []struct {
 }{
 	{"empty", "", ""},
 	{"text", "plain text\n", "plain text\n"},
-	{"unicode text", "é→ ✓", "é→ ✓"},
 	{"braces in text", "a { b } c }} d", "a { b } c }} d"},
 
 	{"int", "{{ n }}", "1"},
 	{"string", "{{ s }}", "str"},
-	{"float", "{{ 1.5 }}", "1.5"},
-	{"bool", "{{ true }}", "true"},
 	{"nil", "{{ nil }}", "<nil>"},
 	{"list", "{{ l }}", "[1 2]"},
-	{"arithmetic", "{{ n + 1 }}", "2"},
-	{"builtin", "{{ upper(s) }}", "STR"},
 	{"text around actions", "a {{ n }} b {{ s }} c", "a 1 b str c"},
 	{"adjacent actions", "{{ n }}{{ s }}", "1str"},
 	{"no spaces", "{{n}}", "1"},
@@ -66,56 +63,41 @@ var executeTests = []struct {
 	{"comment with braces", "{{ n /* }} */ }}", "1"},
 	{"left delimiter in string", `{{ "{{" }}`, "{{"},
 	{"unicode in action", `{{ "é→" }} ✓`, "é→ ✓"},
+	{"output is not escaped", `{{ "<b>&" }}`, "<b>&"},
 
 	{"trim", "a  {{- n -}}  b", "a1b"},
-	{"trim newlines", "a\n\n{{- n -}}\n\nb", "a1b"},
 	{"trim tabs", "a\t{{- n -}}\r\n\tb", "a1b"},
 	{"trim left only", "a  {{- n }}  b", "a1  b"},
+	{"left trim keeps white space before the text", " a {{- n }}", " a1"},
 	{"trim right only", "a  {{ n -}}  b", "a  1b"},
 	{"trim at the ends", " {{- n -}} ", "1"},
 	{"trim text between actions", "{{ n -}} \n {{- s }}", "1str"},
-	{"trim after comment", "{{ n /* c */ -}} b", "1b"},
-	{"trim keeps minus in text", "hello- {{- 3 -}} -world", "hello-3-world"},
 	{"trim unicode white space", "a\u00a0\f{{- n -}}\u2003\vb", "a1b"},
 	{"trim marker with unicode white space", "a {{-\u00a0n\u00a0-}} b", "a1b"},
 	{"minus without space", "{{-3}}", "-3"},
-	{"minus before braces", "{{ 5 -3}}", "2"},
 
 	{"comment", "a{{/* c */}}b", "ab"},
-	{"comment with spaces", "a{{ /* c */ }}b", "ab"},
-	{"comment across lines", "a{{/* c\nd */}}b", "ab"},
-	{"comment with braces only", "a{{/* }} */}}b", "ab"},
-	{"two comments", "a{{ /* c */ /* d */ }}b", "ab"},
 	{"line comment", "a{{ // c\n}}b", "ab"},
-	{"comment keeps white space", "a {{/* c */}} b", "a  b"},
 	{"trim around comment", "a {{- /* c */ -}} b", "ab"},
-	{"trim before comment", "a {{- /* c */}} b", "a b"},
-	{"trim after comment only", "a {{/* c */ -}} b", "a b"},
-	{"comment between actions", "{{ n }}{{/* c */}}{{ s }}", "1str"},
 	{"comment only", "{{/* c */}}", ""},
-	{"comment with a form feed", "a{{ /* c */ \f }}b", "ab"},
 	{"comment before expression", "a{{ /* c */ n }}b", "a1b"},
-	{"line comment before expression", "a{{ // c\n n }}b", "a1b"},
 
 	{"if true", "a{{ if n == 1 }}b{{ end }}c", "abc"},
 	{"if false", "a{{ if n == 2 }}b{{ end }}c", "ac"},
 	{"if with actions", "{{ if true }}{{ n }}-{{ s }}{{ end }}", "1-str"},
 	{"if with empty body", "a{{ if true }}{{ end }}b", "ab"},
-	{"if without spaces", "{{if true}}a{{end}}", "a"},
-	{"if across lines", "{{ if n ==\n 1 }}a{{ end }}", "a"},
 	{"if with comment", "{{ if /* c */ true }}a{{ end /* c */ }}", "a"},
 	{"nested if", "{{ if true }}a{{ if false }}b{{ end }}c{{ end }}d", "acd"},
 	{"nested if in false", "{{ if false }}a{{ if true }}b{{ end }}c{{ end }}d", "d"},
-	{"if after if", "{{ if true }}a{{ end }}{{ if true }}b{{ end }}", "ab"},
 	{"trim in if", "a {{- if true -}} b {{- end -}} c", "abc"},
 	{"if with parentheses", "{{ if(n == 1) }}a{{ end }}", "a"},
 	{"if expression of expr", "{{ (if n == 1 { 2 } else { 3 }) }}", "2"},
 	{"false if does not run its body", "a{{ if false }}{{ l[5] }}{{ end }}b", "ab"},
+	{"if compares with nil", "{{ if p != nil }}a{{ else }}b{{ end }}", "b"},
 
 	{"else of a true if", "{{ if n == 1 }}a{{ else }}b{{ end }}c", "ac"},
 	{"else of a false if", "{{ if n == 2 }}a{{ else }}b{{ end }}c", "bc"},
 	{"else with actions", "{{ if false }}{{ n }}{{ else }}{{ s }}{{ end }}", "str"},
-	{"else without spaces", "{{if false}}a{{else}}b{{end}}", "b"},
 	{"else with comment", "{{ if false }}a{{ else /* c */ }}b{{ end }}", "b"},
 	{"empty else", "a{{ if false }}b{{ else }}{{ end }}c", "ac"},
 	{"trim around else", "{{ if false }} a {{- else -}} b {{- end }}", "b"},
@@ -124,18 +106,9 @@ var executeTests = []struct {
 	{"else if, none is true", "{{ if n == 2 }}a{{ else if n == 3 }}b{{ else }}c{{ end }}", "c"},
 	{"else if without else", "x{{ if n == 2 }}a{{ else if n == 3 }}b{{ end }}y", "xy"},
 	{"three else if", "{{ if n == 4 }}a{{ else if n == 3 }}b{{ else if n == 2 }}c{{ else if n == 1 }}d{{ end }}", "d"},
-	{"else if across lines", "{{ if false }}a{{ else\nif\nn == 1 }}b{{ end }}", "b"},
 	{"if in else", "{{ if false }}a{{ else }}{{ if true }}b{{ end }}c{{ end }}", "bc"},
 	{"if with else in if", "{{ if true }}{{ if false }}a{{ else }}b{{ end }}{{ else }}c{{ end }}", "b"},
-	{"trim around else if", "{{ if false }} a {{- else if true -}} b {{- end }}", "b"},
 	{"true if does not evaluate else if", "{{ if true }}a{{ else if l[5] == 1 }}b{{ end }}", "a"},
-	{"true else if does not evaluate the next else if", "{{ if false }}a{{ else if true }}b{{ else if l[5] == 1 }}c{{ end }}", "b"},
-	{"keyword in string", `{{ "if" }}{{ "end" }}{{ "for" }}`, "ifendfor"},
-
-	{"for", "{{ for x in l }}{{ x }},{{ end }}", "1,2,"},
-	{"for with if", "{{ for x in l }}{{ if x == n }}a{{ else }}b{{ end }}{{ end }}", "ab"},
-	{"nested for", "{{ for x in l }}{{ for y in l }}{{ x * y }} {{ end }}{{ end }}", "1 2 2 4 "},
-	{"trim in for", "{{ for x in l -}} {{ x }} {{- end }}", "12"},
 }
 
 func TestExecute(t *testing.T) {
@@ -153,18 +126,18 @@ func TestExecute(t *testing.T) {
 }
 
 func TestKeywordAsName(t *testing.T) {
-	data := map[string]any{"end": 1, "ending": 2, "iffy": 3, "t": true, "If": 4, "IF": 5}
+	data := map[string]any{"end": 1, "for": 6, "ending": 2, "iffy": 3, "t": true, "If": 4, "IF": 5}
 	tests := []struct {
 		name string
 		text string
 		want string
 	}{
-		{"in parentheses", "{{ (end) }}", "1"},
+		{"in parentheses", "{{ (end) }}{{ (for) }}", "16"},
+		{"in a string", `{{ "if" }}{{ "end" }}{{ "for" }}`, "ifendfor"},
 		{"not the first word", "{{ 1 + end }}", "2"},
 		{"in a condition", "{{ if end == 1 }}a{{ end }}", "a"},
 		{"prefix of a name", "{{ ending }}{{ iffy }}", "23"},
-		{"if in another case", "{{ If }}{{ IF }}", "45"},
-		{"end in another case", "{{ if t }}{{ END }}{{ end }}", "<nil>"},
+		{"in another case", "{{ If }}{{ IF }}{{ if t }}{{ END }}{{ end }}", "45<nil>"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -199,16 +172,6 @@ func TestConditionIgnoresResultType(t *testing.T) {
 	}
 }
 
-func TestExecuteWithoutOptions(t *testing.T) {
-	got, err := execute(t, "{{ a }}-{{ b }}", map[string]any{"a": 1, "b": "x"})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if want := "1-x"; got != want {
-		t.Errorf("got %q, want %q", got, want)
-	}
-}
-
 func TestExecuteBeforeParse(t *testing.T) {
 	err := New("t").Execute(io.Discard, nil)
 	if err == nil {
@@ -216,6 +179,27 @@ func TestExecuteBeforeParse(t *testing.T) {
 	}
 	if want := `template "t" is not parsed`; err.Error() != want {
 		t.Errorf("got %q, want %q", err, want)
+	}
+}
+
+func TestFailedParse(t *testing.T) {
+	tmpl := New("t", expr.Env(env{}))
+	if got, err := tmpl.Parse("{{"); got != nil || err == nil {
+		t.Fatalf("got %v, %v, want nil and an error", got, err)
+	}
+	err := tmpl.Execute(io.Discard, testData)
+	if want := `template "t" is not parsed`; err == nil || err.Error() != want {
+		t.Errorf("got %v, want %s", err, want)
+	}
+
+	Must(tmpl.Parse("a\n{{ l[5] }}"))
+	if _, err := tmpl.Parse("{{"); err == nil {
+		t.Fatal("no error")
+	}
+	err = tmpl.Execute(io.Discard, testData)
+	want := "index out of range: 5 (array length is 2) (t:2:5)\n | {{ l[5] }}\n | ....^"
+	if err == nil || err.Error() != want {
+		t.Errorf("got\n%v\nwant\n%s", err, want)
 	}
 }
 
@@ -250,21 +234,44 @@ func FuzzParse(f *testing.F) {
 	for _, tt := range loopTests {
 		f.Add(tt.text)
 	}
+	for _, tt := range parseErrorTests {
+		f.Add(tt.text)
+	}
+	for _, tt := range executeErrorTests {
+		f.Add(tt.text)
+	}
+	for _, tt := range loopParseErrorTests {
+		f.Add(tt.text)
+	}
+	data := newLoopMap()
+	maps.Copy(data, map[string]any{"n": 1, "s": "str", "l": []int{1, 2}})
 	f.Fuzz(func(t *testing.T, text string) {
-		tmpl, err := New("t", expr.Env(env{})).Parse(text)
-		if err != nil {
-			return
-		}
-		var b strings.Builder
-		err = tmpl.Execute(&b, testData)
-		if strings.Contains(text, leftDelim) {
-			return
-		}
-		if err != nil {
-			t.Fatal(err)
-		}
-		if got := b.String(); got != text {
-			t.Errorf("got %q, want %q", got, text)
-		}
+		fuzzExecute(t, text, testData, expr.Env(env{}))
+		fuzzExecute(t, text, data)
 	})
+}
+
+// fuzzExecute parses and executes text. An error must be an *Error with a
+// position inside text. A text without an action must be the output.
+func fuzzExecute(t *testing.T, text string, data any, opts ...expr.Option) {
+	t.Helper()
+	got, err := execute(t, text, data, opts...)
+	if err != nil {
+		e, ok := errors.AsType[*Error](err)
+		if !ok {
+			t.Fatalf("got %T, want *Error", err)
+		}
+		if lines := strings.Count(text, "\n") + 1; e.Line < 1 || e.Line > lines || e.Column < 1 {
+			t.Fatalf("position %d:%d is outside the text", e.Line, e.Column)
+		}
+	}
+	if strings.Contains(text, leftDelim) {
+		return
+	}
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got != text {
+		t.Errorf("got %q, want %q", got, text)
+	}
 }

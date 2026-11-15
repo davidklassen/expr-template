@@ -110,41 +110,37 @@ func (t *Template) execFor(w io.Writer, n *forNode, data any) error {
 	if err != nil {
 		return exprError(t.name, t.text, n.at, n.start, err)
 	}
-	list := reflect.ValueOf(v)
-	var entries []entry
-	ok := list.Kind() == reflect.Slice || list.Kind() == reflect.Array
-	if list.Kind() == reflect.Map {
-		entries, ok = sortedEntries(list)
-	}
-	if !ok {
-		return newError(t.name, t.text, n.start, loopMessage(typeName(v)))
-	}
-	if list.Len() == 0 {
+	switch list := reflect.ValueOf(v); list.Kind() {
+	case reflect.Slice, reflect.Array:
+		loop := newLoopEnv(data)
+		for i := range list.Len() {
+			if n.key != "" {
+				loop[n.key] = i
+			}
+			loop[n.elem] = list.Index(i).Interface()
+			if err := t.exec(w, n.body, loop); err != nil {
+				return err
+			}
+		}
 		return nil
-	}
-	loop := newLoopEnv(data)
-	if list.Kind() == reflect.Map {
+	case reflect.Map:
+		entries, ok := sortedEntries(list)
+		if !ok {
+			return newError(t.name, t.text, n.start, sortMessage(typeName(v)))
+		}
+		loop := newLoopEnv(data)
 		for _, e := range entries {
 			if n.key != "" {
 				loop[n.key] = e.key.Interface()
 			}
-			loop[n.name] = e.value.Interface()
+			loop[n.elem] = e.value.Interface()
 			if err := t.exec(w, n.body, loop); err != nil {
 				return err
 			}
 		}
 		return nil
 	}
-	for i := range list.Len() {
-		if n.key != "" {
-			loop[n.key] = i
-		}
-		loop[n.name] = list.Index(i).Interface()
-		if err := t.exec(w, n.body, loop); err != nil {
-			return err
-		}
-	}
-	return nil
+	return newError(t.name, t.text, n.start, loopMessage(typeName(v)))
 }
 
 // Must is a helper that wraps a call to a function returning ([*Template],
