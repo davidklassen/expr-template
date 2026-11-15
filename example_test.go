@@ -129,3 +129,24 @@ func ExampleTemplate_Print() {
 	//  | password = {{ db.passwrd }}
 	//  | ...........^
 }
+
+func ExampleTemplate_Nodes() {
+	t := template.Must(template.New("hello").Parse(
+		"Hello, {{ name }}!{{ if admin }} You are an admin.{{ end }}\n"))
+	for _, n := range t.Nodes() {
+		switch n := n.(type) {
+		case *template.TextNode:
+			fmt.Printf("text %q\n", n.Text)
+		case *template.ActionNode:
+			fmt.Printf("action %q\n", n.Expr.Program.Source())
+		case *template.IfNode:
+			fmt.Printf("if %q with %d nodes\n", n.Cond.Program.Source(), len(n.Body))
+		}
+	}
+	// Output:
+	// text "Hello, "
+	// action "name "
+	// text "!"
+	// if "admin " with 1 nodes
+	// text "\n"
+}

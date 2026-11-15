@@ -16,7 +16,7 @@ type Template struct {
 	print  func(any) (string, error)
 	parsed bool
 	text   string
-	nodes  []node
+	nodes  []Node
 }
 
 // New returns a new template with the given name. The options apply to every
@@ -61,6 +61,12 @@ func (t *Template) Parse(text string) (*Template, error) {
 	return t, nil
 }
 
+// Nodes returns the parse tree of the template: its top-level nodes in order.
+// The tree must not be modified.
+func (t *Template) Nodes() []Node {
+	return t.nodes
+}
+
 // Execute applies the template to data and writes the output to w. The
 // expressions are evaluated with data as their env. Execute prints the value of
 // each expression as [fmt.Print] does. To override the printing function, use
@@ -79,44 +85,44 @@ func (t *Template) Execute(w io.Writer, data any) error {
 	return t.exec(w, t.nodes, data)
 }
 
-func (t *Template) exec(w io.Writer, nodes []node, data any) error {
+func (t *Template) exec(w io.Writer, nodes []Node, data any) error {
 	for _, n := range nodes {
 		switch n := n.(type) {
-		case *textNode:
-			if _, err := io.WriteString(w, n.text); err != nil {
+		case *TextNode:
+			if _, err := io.WriteString(w, n.Text); err != nil {
 				return err
 			}
-		case *actionNode:
-			v, err := expr.Run(n.prog, data)
+		case *ActionNode:
+			v, err := expr.Run(n.Expr.Program, data)
 			if err != nil {
-				return exprError(t.name, t.text, n.at, n.start, err)
+				return exprError(t.name, t.text, n.loc.From, n.Expr.loc.From, err)
 			}
 			s, err := t.print(v)
 			if err != nil {
-				e := newError(t.name, t.text, n.at, err.Error())
+				e := newError(t.name, t.text, n.loc.From, err.Error())
 				e.cause = err
 				return e
 			}
 			if _, err := io.WriteString(w, s); err != nil {
 				return err
 			}
-		case *ifNode:
-			v, err := expr.Run(n.prog, data)
+		case *IfNode:
+			v, err := expr.Run(n.Cond.Program, data)
 			if err != nil {
-				return exprError(t.name, t.text, n.at, n.start, err)
+				return exprError(t.name, t.text, n.loc.From, n.Cond.loc.From, err)
 			}
 			cond, ok := v.(bool)
 			if !ok {
-				return newError(t.name, t.text, n.start, conditionMessage(typeName(v)))
+				return newError(t.name, t.text, n.Cond.loc.From, conditionMessage(typeName(v)))
 			}
-			body := n.elseBody
+			body := n.ElseBody
 			if cond {
-				body = n.body
+				body = n.Body
 			}
 			if err := t.exec(w, body, data); err != nil {
 				return err
 			}
-		case *forNode:
+		case *ForNode:
 			if err := t.execFor(w, n, data); err != nil {
 				return err
 			}
@@ -125,20 +131,20 @@ func (t *Template) exec(w io.Writer, nodes []node, data any) error {
 	return nil
 }
 
-func (t *Template) execFor(w io.Writer, n *forNode, data any) error {
-	v, err := expr.Run(n.prog, data)
+func (t *Template) execFor(w io.Writer, n *ForNode, data any) error {
+	v, err := expr.Run(n.Collection.Program, data)
 	if err != nil {
-		return exprError(t.name, t.text, n.at, n.start, err)
+		return exprError(t.name, t.text, n.loc.From, n.Collection.loc.From, err)
 	}
 	switch coll := reflect.ValueOf(v); coll.Kind() {
 	case reflect.Slice, reflect.Array:
 		loop := newLoopEnv(data)
 		for i := range coll.Len() {
-			if n.key != "" {
-				loop[n.key] = i
+			if n.Key != "" {
+				loop[n.Key] = i
 			}
-			loop[n.elem] = coll.Index(i).Interface()
-			if err := t.exec(w, n.body, loop); err != nil {
+			loop[n.Elem] = coll.Index(i).Interface()
+			if err := t.exec(w, n.Body, loop); err != nil {
 				return err
 			}
 		}
@@ -146,21 +152,21 @@ func (t *Template) execFor(w io.Writer, n *forNode, data any) error {
 	case reflect.Map:
 		entries, ok := sortedEntries(coll)
 		if !ok {
-			return newError(t.name, t.text, n.start, sortMessage(typeName(v)))
+			return newError(t.name, t.text, n.Collection.loc.From, sortMessage(typeName(v)))
 		}
 		loop := newLoopEnv(data)
 		for _, e := range entries {
-			if n.key != "" {
-				loop[n.key] = e.key.Interface()
+			if n.Key != "" {
+				loop[n.Key] = e.key.Interface()
 			}
-			loop[n.elem] = e.value.Interface()
-			if err := t.exec(w, n.body, loop); err != nil {
+			loop[n.Elem] = e.value.Interface()
+			if err := t.exec(w, n.Body, loop); err != nil {
 				return err
 			}
 		}
 		return nil
 	}
-	return newError(t.name, t.text, n.start, loopMessage(typeName(v)))
+	return newError(t.name, t.text, n.Collection.loc.From, loopMessage(typeName(v)))
 }
 
 // Must is a helper that wraps a call to a function returning ([*Template],

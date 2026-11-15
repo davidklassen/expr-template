@@ -249,6 +249,9 @@ func FuzzParse(f *testing.F) {
 	f.Fuzz(func(t *testing.T, text string) {
 		fuzzExecute(t, text, testData, expr.Env(env{}))
 		fuzzExecute(t, text, data)
+		if tmpl, err := New("t").Parse(text); err == nil {
+			checkLocations(t, []rune(text), tmpl.Nodes())
+		}
 	})
 }
 
