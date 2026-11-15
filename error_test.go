@@ -51,7 +51,7 @@ var parseErrorTests = []struct {
 	{
 		"syntax error",
 		"{{ n + }}",
-		"unexpected token EOF (t:1:7)\n | {{ n + }}\n | ......^",
+		"unexpected token EOF (t:1:6)\n | {{ n + }}\n | .....^",
 	},
 	{
 		"minus before the end of an action",

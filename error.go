@@ -4,7 +4,6 @@ import (
 	"errors"
 	"fmt"
 	"reflect"
-	"unicode/utf8"
 
 	"github.com/expr-lang/expr/file"
 )
@@ -32,11 +31,11 @@ func (e *Error) Unwrap() error {
 	return e.cause
 }
 
-// newError returns an error that points to the byte offset pos in text. It uses
+// newError returns an error that points to the rune offset pos in text. It uses
 // file.Error of expr to compute the line, the column, and the snippet, so that
 // they look the same as in an expr error.
 func newError(name, text string, pos int, message string) *Error {
-	fe := &file.Error{Location: file.Location{From: utf8.RuneCountInString(text[:pos])}}
+	fe := &file.Error{Location: file.Location{From: pos}}
 	fe.Bind(file.NewSource(text))
 	return &Error{
 		Name:    name,
@@ -47,8 +46,8 @@ func newError(name, text string, pos int, message string) *Error {
 	}
 }
 
-// exprError converts err, an error from expr, to an Error. at is the byte
-// offset in text of the "{{" of the action, and start is the byte offset of its
+// exprError converts err, an error from expr, to an Error. at is the rune offset
+// in text of the "{{" of the action, and start is the rune offset of its
 // expression. The Error points to the position that err reports inside the
 // expression, or to the "{{" if err has no position.
 func exprError(name, text string, at, start int, err error) *Error {
@@ -61,7 +60,7 @@ func exprError(name, text string, at, start int, err error) *Error {
 	// never the zero value: its end is after its start.
 	pos := at
 	if fe.Location != (file.Location{}) {
-		pos = start + byteOffset(text[start:], fe.From)
+		pos = start + fe.From
 	}
 	e := newError(name, text, pos, fe.Message)
 	e.cause = fe.Prev

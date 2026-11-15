@@ -244,6 +244,9 @@ func FuzzParse(f *testing.F) {
 	for _, tt := range loopParseErrorTests {
 		f.Add(tt.text)
 	}
+	for _, tt := range nodeTests {
+		f.Add(tt.text)
+	}
 	data := newLoopMap()
 	maps.Copy(data, map[string]any{"n": 1, "s": "str", "l": []int{1, 2}})
 	f.Fuzz(func(t *testing.T, text string) {
@@ -256,7 +259,13 @@ func FuzzParse(f *testing.F) {
 // position inside text. A text without an action must be the output.
 func fuzzExecute(t *testing.T, text string, data any, opts ...expr.Option) {
 	t.Helper()
-	got, err := execute(t, text, data, opts...)
+	tmpl, err := New("t", opts...).Parse(text)
+	var b strings.Builder
+	if err == nil {
+		checkLocations(t, []rune(text), 0, tmpl.Nodes())
+		err = tmpl.Execute(&b, data)
+	}
+	got := b.String()
 	if err != nil {
 		e, ok := errors.AsType[*Error](err)
 		if !ok {
@@ -279,16 +288,46 @@ func fuzzExecute(t *testing.T, text string, data any, opts ...expr.Option) {
 
 func TestPrint(t *testing.T) {
 	print := func(v any) (string, error) {
+		if _, ok := v.(int); !ok {
+			return "", fmt.Errorf("got %T, want int", v)
+		}
 		return fmt.Sprintf("<%v>", v), nil
 	}
-	text := "a {{ 1 }} {{ if ok }}{{ for x in nums }}{{ x }}{{ end }}{{ end }} {{ nil }}"
-	tmpl := Must(New("t").Print(print).Parse(text))
+	text := "a {{ 1 }} {{ if ok }}{{ for x in nums }}{{ x }}{{ end }}{{ end }} {{ for k, v in ages }}{{ v }}{{ end }}"
+	tmpl := Must(New("t").Parse(text))
+	tmpl.Print(print)
 	var b strings.Builder
-	if err := tmpl.Execute(&b, map[string]any{"ok": true, "nums": []int{2, 3}}); err != nil {
+	data := map[string]any{"ok": true, "nums": []int{2, 3}, "ages": map[string]int{"al": 4, "bob": 5}}
+	if err := tmpl.Execute(&b, data); err != nil {
 		t.Fatal(err)
 	}
-	if got, want := b.String(), "a <1> <2><3> <<nil>>"; got != want {
+	if got, want := b.String(), "a <1> <2><3> <4><5>"; got != want {
 		t.Errorf("got %q, want %q", got, want)
+	}
+}
+
+func TestPrintDefault(t *testing.T) {
+	print := func(v any) (string, error) {
+		return "x", nil
+	}
+	tests := []struct {
+		name string
+		tmpl *Template
+	}{
+		{"zero Template", new(Template)},
+		{"Print(nil)", New("t").Print(print).Print(nil)},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			tmpl := Must(tt.tmpl.Parse("{{ v }}"))
+			var b strings.Builder
+			if err := tmpl.Execute(&b, map[string]any{"v": struct{ A int }{1}}); err != nil {
+				t.Fatal(err)
+			}
+			if got, want := b.String(), "{1}"; got != want {
+				t.Errorf("got %q, want %q", got, want)
+			}
+		})
 	}
 }
 
