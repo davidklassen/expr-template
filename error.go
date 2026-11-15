@@ -26,7 +26,8 @@ func (e *Error) Error() string {
 }
 
 // Unwrap returns the cause of e, or nil if it has none. If a function that the
-// template calls returns an error, that error is the cause.
+// template calls returns an error, that error is the cause. An error from the
+// printing function is the cause too.
 func (e *Error) Unwrap() error {
 	return e.cause
 }

@@ -25,7 +25,8 @@
 //
 //	{{ expression }}
 //		The value of the expression is printed as fmt.Print prints
-//		it, so nil is printed as <nil>.
+//		it, so nil is printed as <nil>. To override the printing
+//		function, use Template.Print.
 //
 //	{{ /* a comment */ }}
 //		A comment in the syntax of expr: /* text */, or // text up

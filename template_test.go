@@ -2,6 +2,7 @@ package template
 
 import (
 	"errors"
+	"fmt"
 	"io"
 	"maps"
 	"strings"
@@ -273,5 +274,68 @@ func fuzzExecute(t *testing.T, text string, data any, opts ...expr.Option) {
 	}
 	if got != text {
 		t.Errorf("got %q, want %q", got, text)
+	}
+}
+
+func TestPrint(t *testing.T) {
+	print := func(v any) (string, error) {
+		return fmt.Sprintf("<%v>", v), nil
+	}
+	text := "a {{ 1 }} {{ if ok }}{{ for x in nums }}{{ x }}{{ end }}{{ end }} {{ nil }}"
+	tmpl := Must(New("t").Print(print).Parse(text))
+	var b strings.Builder
+	if err := tmpl.Execute(&b, map[string]any{"ok": true, "nums": []int{2, 3}}); err != nil {
+		t.Fatal(err)
+	}
+	if got, want := b.String(), "a <1> <2><3> <<nil>>"; got != want {
+		t.Errorf("got %q, want %q", got, want)
+	}
+}
+
+func TestPrintError(t *testing.T) {
+	errNil := errors.New("cannot print nil")
+	print := func(v any) (string, error) {
+		if v == nil {
+			return "ignored", errNil
+		}
+		return fmt.Sprint(v), nil
+	}
+	tests := []struct {
+		name string
+		text string
+		out  string
+		want string
+	}{
+		{
+			"action",
+			"a {{ 1 }}\nb {{- m.x }} c",
+			"a 1\nb",
+			"cannot print nil (t:2:3)\n | b {{- m.x }} c\n | ..^",
+		},
+		{
+			"action in a loop",
+			"{{ for x in [1, nil] }}{{ x }};{{ end }}",
+			"1;",
+			"cannot print nil (t:1:24)\n | {{ for x in [1, nil] }}{{ x }};{{ end }}\n | .......................^",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			tmpl := Must(New("t").Print(print).Parse(tt.text))
+			var b strings.Builder
+			err := tmpl.Execute(&b, map[string]any{"m": map[string]any{}})
+			if err == nil {
+				t.Fatal("no error")
+			}
+			if err.Error() != tt.want {
+				t.Errorf("got\n%s\nwant\n%s", err, tt.want)
+			}
+			if !errors.Is(err, errNil) {
+				t.Errorf("errors.Is(err, errNil) is false")
+			}
+			if got := b.String(); got != tt.out {
+				t.Errorf("got output %q, want %q", got, tt.out)
+			}
+		})
 	}
 }

@@ -3,6 +3,7 @@ package template_test
 import (
 	"errors"
 	"fmt"
+	"io"
 	"log"
 	"os"
 
@@ -107,4 +108,24 @@ func Example_forMap() {
 	// cake: 3
 	// milk: 7
 	// tea: 12
+}
+
+func ExampleTemplate_Print() {
+	print := func(v any) (string, error) {
+		if v == nil {
+			return "", errors.New("no value")
+		}
+		return fmt.Sprint(v), nil
+	}
+
+	t := template.Must(template.New("config").Print(print).Parse(
+		"user = {{ db.user }}\npassword = {{ db.passwrd }}\n"))
+	err := t.Execute(io.Discard, map[string]any{
+		"db": map[string]any{"user": "app", "password": "secret"},
+	})
+	fmt.Println(err)
+	// Output:
+	// no value (config:2:12)
+	//  | password = {{ db.passwrd }}
+	//  | ...........^
 }

@@ -13,6 +13,7 @@ import (
 type Template struct {
 	name   string
 	opts   []expr.Option
+	print  func(any) (string, error)
 	parsed bool
 	text   string
 	nodes  []node
@@ -25,12 +26,24 @@ type Template struct {
 // receives. Parse then reports type errors and unknown names. Without expr.Env,
 // Parse does not check the names.
 func New(name string, opts ...expr.Option) *Template {
-	return &Template{name: name, opts: slices.Clone(opts)}
+	return &Template{name: name, opts: slices.Clone(opts), print: printValue}
+}
+
+func printValue(v any) (string, error) {
+	return fmt.Sprint(v), nil
 }
 
 // Name returns the name of the template.
 func (t *Template) Name() string {
 	return t.name
+}
+
+// Print overrides the function that converts the value of an action to text.
+// The default is [fmt.Sprint]. If f returns an error, Execute stops and returns
+// an [*Error] that wraps it.
+func (t *Template) Print(f func(v any) (string, error)) *Template {
+	t.print = f
+	return t
 }
 
 // Parse parses text as the body of the template and compiles its expressions.
@@ -50,7 +63,8 @@ func (t *Template) Parse(text string) (*Template, error) {
 
 // Execute applies the template to data and writes the output to w. The
 // expressions are evaluated with data as their env. Execute prints the value of
-// each expression as [fmt.Print] does.
+// each expression as [fmt.Print] does. To override the printing function, use
+// [Template.Print].
 //
 // If an error occurs, Execute stops, but it can have written part of the output
 // to w. An error in an action is an [*Error] with the position of the problem
@@ -77,7 +91,13 @@ func (t *Template) exec(w io.Writer, nodes []node, data any) error {
 			if err != nil {
 				return exprError(t.name, t.text, n.at, n.start, err)
 			}
-			if _, err := fmt.Fprint(w, v); err != nil {
+			s, err := t.print(v)
+			if err != nil {
+				e := newError(t.name, t.text, n.at, err.Error())
+				e.cause = err
+				return e
+			}
+			if _, err := io.WriteString(w, s); err != nil {
 				return err
 			}
 		case *ifNode:
